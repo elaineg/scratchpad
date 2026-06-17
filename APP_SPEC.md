@@ -17,4 +17,4 @@ Success checks:
 8. No chrome on load: on cold load there is no visible toolbar, menu bar, header, sidebar, or buttons — only the blank centered writing surface (optionally a faint placeholder hint that disappears on first keystroke).
 9. Comfortable measure: the writing column is centered with a constrained max width (roughly 65–75 characters per line, not full-bleed edge-to-edge).
 Out of scope: no multi-note / "new note" management, no save/open/named notes, no sidebar or note list, no export (PDF/markdown/file), no account or login, no server/Turso/cloud sync, no collaboration or sharing links, no toolbar or formatting buttons (formatting is keyboard markdown input-rules only). ONE scratchpad, single localStorage document. (Implementation note: use a free markdown-input-rule editor framework — TipTap on ProseMirror, or Lexical's markdown-shortcut plugin — do NOT hand-roll contenteditable. Reference aesthetic is DROPBOX PAPER (warm, calm, typographic, generous line-height, centered ~65–75ch measure); this OVERRIDES the SSENSE house chrome since there is essentially no chrome.)
-Production URL:
+Production URL: https://scratchpad-orcin.vercel.app
