@@ -19,6 +19,14 @@ body {
   height: 100%;
 }
 
+/* ─── TipTap / ProseMirror: kill focus ring ─── */
+.ProseMirror:focus,
+.ProseMirror:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: none;
+}
+
 /* ─── TipTap editor prose surface ─── */
 .scratchpad-editor {
   outline: none;
@@ -30,17 +38,17 @@ body {
   min-height: 60vh;
 }
 
-/* Placeholder — TipTap v3 Placeholder extension sets .is-empty.is-editor-empty class
-   and placeholder="…" attribute on the first paragraph's ProseMirror node decoration */
-.scratchpad-editor p.is-empty.is-editor-empty::before,
-.scratchpad-editor p.is-empty::before {
-  content: attr(placeholder);
+/* Placeholder — TipTap v3 Placeholder extension:
+   - sets .is-editor-empty on the .ProseMirror root when the editor is empty
+   - sets .is-empty on individual empty nodes
+   - sets data-placeholder attribute on the decorated node */
+.ProseMirror.is-editor-empty p:first-child::before,
+.ProseMirror p.is-empty:first-child::before {
+  content: attr(data-placeholder);
   color: var(--muted);
+  float: left;
+  height: 0;
   pointer-events: none;
-  position: absolute;
-  left: 0;
-  top: 0;
-  white-space: nowrap;
 }
 
 /* Headings */

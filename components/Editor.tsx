@@ -20,6 +20,9 @@ export default function Editor() {
   // Debounce timer ref
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Guard: don't flash "Saved" during the initial content restore
+  const isRestoringRef = useRef(false);
+
   const triggerSaved = useCallback(() => {
     setSavedKey((k) => k + 1);
     setShowSaved(true);
@@ -53,7 +56,10 @@ export default function Editor() {
           try {
             const json = editor.getJSON();
             localStorage.setItem(STORAGE_KEY, JSON.stringify(json));
-            triggerSaved();
+            // Don't flash "Saved" during the initial restore-from-localStorage
+            if (!isRestoringRef.current) {
+              triggerSaved();
+            }
           } catch {
             // localStorage may be blocked in some contexts
           }
@@ -68,14 +74,19 @@ export default function Editor() {
     setMounted(true);
   }, []);
 
-  // After mount: restore from localStorage
+  // After mount: restore from localStorage (suppress "Saved" flash during restore)
   useEffect(() => {
     if (!mounted || !editor) return;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const json = JSON.parse(raw);
+        isRestoringRef.current = true;
         editor.commands.setContent(json);
+        // Reset the flag after the debounce window so any pending onUpdate fires suppressed
+        setTimeout(() => {
+          isRestoringRef.current = false;
+        }, SAVE_DEBOUNCE_MS + 100);
       }
     } catch {
       // Corrupt data or blocked storage — start fresh
