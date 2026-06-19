@@ -217,13 +217,21 @@ test('SC7: converting a paragraph line to heading does not cause other lines to 
 });
 
 // ─── Success check 8: No chrome on load ──────────────────────────────────────
-test('SC8: no toolbar, menu bar, header, sidebar, or buttons visible on cold load', async ({ page }) => {
+test('SC8: no toolbar, menu bar, header, sidebar, or visible buttons on cold load', async ({ page }) => {
   await freshLoad(page);
-  // No nav, header, sidebar, or button elements
+  // No nav, header, or sidebar elements
   await expect(page.locator('nav')).toHaveCount(0);
   await expect(page.locator('header')).toHaveCount(0);
   await expect(page.locator('aside')).toHaveCount(0);
-  await expect(page.locator('button')).toHaveCount(0);
+  // Copy buttons are in the DOM but hidden (opacity:0, pointer-events:none, aria-hidden)
+  // on a blank document — they must NOT be visible or interactive
+  const copyActions = page.locator('.copy-actions');
+  // aria-hidden is set to true on blank load
+  const ariaHidden = await copyActions.getAttribute('aria-hidden');
+  expect(ariaHidden).toBe('true');
+  // computed opacity must be 0
+  const opacity = await copyActions.evaluate((el) => parseFloat(window.getComputedStyle(el).opacity));
+  expect(opacity).toBe(0);
   // Only the main writing surface
   await expect(page.locator('main')).toBeVisible();
 });
@@ -377,4 +385,316 @@ test('FIX3c: "Saved" DOES appear after typing new content (debounce + indicator)
   await page.keyboard.type('new content for saved indicator');
   // Wait for debounce + animation start (800ms debounce + buffer)
   await expect(page.locator('.saved-indicator.show')).toBeVisible({ timeout: 3000 });
+});
+
+// ─── Success check 10: Copy affordance visibility ─────────────────────────────
+test('SC10: copy buttons hidden on blank load; fade in after typing; fade out when emptied', async ({ page }) => {
+  await freshLoad(page);
+  // On blank load: aria-hidden true, opacity 0
+  const copyActions = page.locator('.copy-actions');
+  expect(await copyActions.getAttribute('aria-hidden')).toBe('true');
+  const opacityBefore = await copyActions.evaluate((el) =>
+    parseFloat(window.getComputedStyle(el).opacity)
+  );
+  expect(opacityBefore).toBe(0);
+
+  // Type something — buttons should appear
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('hello');
+  await page.waitForTimeout(300); // allow state update
+  expect(await copyActions.getAttribute('aria-hidden')).toBe('false');
+  const opacityAfter = await copyActions.evaluate((el) =>
+    parseFloat(window.getComputedStyle(el).opacity)
+  );
+  expect(opacityAfter).toBeGreaterThan(0);
+  // Both labeled actions visible
+  await expect(page.locator('[data-testid="copy-rich-btn"]')).toContainText('Copy as Rich Text');
+  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copy as Markdown');
+
+  // Delete all content — use Meta+A (macOS select-all) then Backspace
+  // NOTE: Control+A does NOT select-all in TipTap on macOS; Meta+A does.
+  await page.keyboard.press('Meta+a');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(300);
+  expect(await copyActions.getAttribute('aria-hidden')).toBe('true');
+});
+
+// ─── Success check 13: Perceptible copy confirmation ─────────────────────────
+test('SC13: copy-markdown confirmation persists for >=1.5s and survives autosave', async ({ page, context }) => {
+  // Grant clipboard permissions
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await freshLoad(page);
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('## Title');
+
+  // Wait for copy button to appear
+  await page.waitForTimeout(300);
+  await page.locator('[data-testid="copy-md-btn"]').click();
+
+  // Immediately check — should show "Copied markdown ✓"
+  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copied markdown ✓', { timeout: 1000 });
+
+  // After 1s it should STILL show "Copied" (not reverted yet — holds for 1.8s)
+  await page.waitForTimeout(1000);
+  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copied markdown ✓');
+});
+
+// ─── Success check 14: No focus-steal / no layout jump ───────────────────────
+test('SC14: clicking copy action does not steal focus from editor', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await freshLoad(page);
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('some text');
+  await page.waitForTimeout(300);
+
+  // Click copy-md using onMouseDown preventDefault + onClick focus restore
+  await page.locator('[data-testid="copy-md-btn"]').click();
+  await page.waitForTimeout(200);
+
+  // Editor should still be focused (active element is inside the editor)
+  const isFocused = await page.evaluate(() => {
+    const editor = document.querySelector('[data-testid="scratchpad-editor"]');
+    return editor ? editor.contains(document.activeElement) : false;
+  });
+  expect(isFocused).toBe(true);
+});
+
+// ─── Success check 15: Mobile safe at 375px ──────────────────────────────────
+test('SC15: copy controls stay within viewport at 375px, no horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await freshLoad(page);
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('mobile test');
+  await page.waitForTimeout(300);
+
+  // Check no horizontal overflow
+  const overflow = await page.evaluate(() => {
+    return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+  });
+  expect(overflow).toBe(false);
+
+  // Copy actions must be within viewport bounds
+  const copyBounds = await page.locator('.copy-actions').boundingBox();
+  expect(copyBounds).not.toBeNull();
+  expect(copyBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(copyBounds!.x + copyBounds!.width).toBeLessThanOrEqual(375 + 1); // +1px tolerance
+});
+
+// ─── Success check 11: Copy as Markdown copies raw source ────────────────────
+test('SC11: Copy as Markdown copies raw markdown source (not rendered HTML)', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await freshLoad(page);
+  await page.locator(EDITOR).click();
+  // Type heading then bullet
+  await page.keyboard.type('## Title');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('- item');
+  await page.waitForTimeout(300);
+
+  // Intercept clipboard.writeText to capture what gets written
+  await page.addInitScript(() => {
+    (window as any).__clipboardWrites = [];
+    const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+    Object.defineProperty(navigator.clipboard, 'writeText', {
+      value: async (text: string) => {
+        (window as any).__clipboardWrites.push(text);
+        return orig(text);
+      },
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  // Reload to apply init script, re-seed content via localStorage
+  await page.evaluate(() => {
+    const doc = {
+      type: 'doc',
+      content: [
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Title' }] },
+        {
+          type: 'bulletList',
+          content: [
+            { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'item' }] }] },
+          ],
+        },
+      ],
+    };
+    window.localStorage.setItem('scratchpad-v1', JSON.stringify(doc));
+  });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+  await page.waitForTimeout(300);
+
+  await page.locator('[data-testid="copy-md-btn"]').click();
+  await page.waitForTimeout(300);
+
+  // Read what was written to clipboard
+  const writes = await page.evaluate(() => (window as any).__clipboardWrites ?? []);
+  // The writeText call should contain raw markdown, not HTML
+  const captured = writes.length > 0 ? writes[writes.length - 1] :
+    await page.evaluate(() => navigator.clipboard.readText());
+
+  expect(typeof captured).toBe('string');
+  // Must contain markdown heading syntax
+  expect(captured).toContain('## Title');
+  // Must contain markdown bullet syntax
+  expect(captured).toContain('- item');
+  // Must NOT contain HTML tags
+  expect(captured).not.toMatch(/<h[1-6]>/);
+  expect(captured).not.toMatch(/<ul>/);
+});
+
+// ─── Success check 12: Copy as Rich Text writes real HTML tags ────────────────
+test('SC12: Copy as Rich Text ClipboardItem contains real HTML tags not markdown', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await freshLoad(page);
+
+  // Intercept navigator.clipboard.write to inspect the ClipboardItem payload
+  await page.addInitScript(() => {
+    (window as any).__clipboardRichWrites = [];
+    const orig = navigator.clipboard.write.bind(navigator.clipboard);
+    Object.defineProperty(navigator.clipboard, 'write', {
+      value: async (items: ClipboardItem[]) => {
+        for (const item of items) {
+          if (item.types.includes('text/html')) {
+            const blob = await item.getType('text/html');
+            const text = await blob.text();
+            (window as any).__clipboardRichWrites.push({ html: text });
+          }
+        }
+        return orig(items);
+      },
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  // Seed bold content via localStorage
+  await page.evaluate(() => {
+    const doc = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'bold', marks: [{ type: 'bold' }] }],
+        },
+        {
+          type: 'heading',
+          attrs: { level: 2 },
+          content: [{ type: 'text', text: 'Heading' }],
+        },
+        {
+          type: 'bulletList',
+          content: [
+            { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'bullet' }] }] },
+          ],
+        },
+        { type: 'horizontalRule' },
+      ],
+    };
+    window.localStorage.setItem('scratchpad-v1', JSON.stringify(doc));
+  });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+  await page.waitForTimeout(300);
+
+  await page.locator('[data-testid="copy-rich-btn"]').click();
+  await page.waitForTimeout(500);
+
+  const writes = await page.evaluate(() => (window as any).__clipboardRichWrites ?? []);
+  expect(writes.length).toBeGreaterThan(0);
+  const htmlPayload = writes[writes.length - 1]?.html ?? '';
+
+  // Must contain real HTML elements — not literal markdown asterisks
+  expect(htmlPayload).toContain('<strong>bold</strong>');
+  expect(htmlPayload).toContain('<h2>Heading</h2>');
+  expect(htmlPayload).toContain('<ul>');
+  expect(htmlPayload).toContain('<li>bullet</li>');
+  expect(htmlPayload).toContain('<hr/>');
+
+  // Must NOT contain markdown syntax
+  expect(htmlPayload).not.toContain('**');
+  expect(htmlPayload).not.toContain('## ');
+  expect(htmlPayload).not.toContain('- bullet');
+});
+
+// ─── Hostile clipboard: blocked clipboard shows "Copy blocked" (not silent) ───
+test('Hostile clipboard: blocked clipboard.writeText shows "Copy blocked" not silent success', async ({ page }) => {
+  // Navigate first to get a valid page context, seed localStorage, then reload
+  // with the clipboard override active via addInitScript
+  await page.goto('/');
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+
+  // Seed content
+  await page.evaluate(() => {
+    window.localStorage.setItem('scratchpad-v1', JSON.stringify({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'blocked test' }] }],
+    }));
+  });
+
+  // Install init script THEN reload so the override is applied on the next navigation
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')),
+        write: () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')),
+        readText: () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')),
+        read: () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')),
+      },
+      configurable: true,
+    });
+  });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+  await page.waitForTimeout(300);
+
+  // Verify clipboard override is active
+  const isBlocked = await page.evaluate(async () => {
+    try { await navigator.clipboard.writeText('test'); return false; } catch { return true; }
+  });
+  expect(isBlocked).toBe(true);
+
+  // Click Copy as Markdown — clipboard is blocked
+  await page.locator('[data-testid="copy-md-btn"]').click();
+  await page.waitForTimeout(200);
+
+  // Must show "Copy blocked" — explicit failure, not "Copied ✓"
+  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copy blocked', { timeout: 2000 });
+  // Must NOT show success
+  const mdText = await page.locator('[data-testid="copy-md-btn"]').innerText();
+  expect(mdText).not.toContain('Copied markdown');
+
+  // Click Copy as Rich Text — also blocked
+  await page.locator('[data-testid="copy-rich-btn"]').click();
+  await page.waitForTimeout(200);
+  await expect(page.locator('[data-testid="copy-rich-btn"]')).toContainText('Copy blocked', { timeout: 2000 });
+  const richText = await page.locator('[data-testid="copy-rich-btn"]').innerText();
+  expect(richText).not.toContain('Copied rich text');
+});
+
+// ─── Copy confirmation survives autosave re-render (live ticking session) ────
+test('SC13b: "Copied" cue is still visible 1s after click despite autosave re-render', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await freshLoad(page);
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('autosave survivor test content');
+
+  // Wait for autosave debounce to fire (800ms + buffer)
+  await page.waitForTimeout(1200);
+
+  // Type one more character to trigger another autosave cycle while we check the confirmation
+  await page.keyboard.type('x');
+
+  // Click the copy button — autosave will re-render within 800ms
+  await page.locator('[data-testid="copy-md-btn"]').click();
+
+  // Check confirmation is present immediately
+  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copied markdown ✓', { timeout: 1000 });
+
+  // Wait 800ms (the autosave debounce fires here and triggers re-render)
+  await page.waitForTimeout(900);
+
+  // The "Copied ✓" cue must STILL be present after autosave re-render
+  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copied markdown ✓');
 });

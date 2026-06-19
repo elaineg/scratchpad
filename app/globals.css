@@ -153,6 +153,64 @@ body {
   font-style: italic;
 }
 
+/* ─── Copy affordance — fixed top-right corner, outside writing column ─── */
+
+.copy-actions {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  /* Opacity transition only — NO layout shift, NO slide */
+  transition: opacity 250ms ease;
+  z-index: 10;
+}
+
+.copy-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  line-height: 1.5;
+  text-align: right;
+  /* Smooth label transition */
+  transition: color 150ms ease;
+  /* Prevent button from stealing focus ring or shifting editor */
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+
+.copy-btn:hover,
+.copy-btn:focus-visible {
+  color: var(--ink);
+}
+
+.copy-btn.confirm {
+  color: #3d7a5a; /* calm confirm-green */
+}
+
+.copy-btn.warn {
+  color: #8a7040; /* muted warning amber-brown */
+}
+
+/* Mobile (≤375px): shrink text slightly, stack right-aligned */
+@media (max-width: 430px) {
+  .copy-actions {
+    top: 12px;
+    right: 12px;
+  }
+  .copy-btn {
+    font-size: 11px;
+  }
+}
+
 /* Saved indicator */
 @keyframes fade-saved {
   0%   { opacity: 0; }
