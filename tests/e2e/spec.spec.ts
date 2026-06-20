@@ -673,6 +673,150 @@ test('Hostile clipboard: blocked clipboard.writeText shows "Copy blocked" not si
   expect(richText).not.toContain('Copied rich text');
 });
 
+// ─── Success check 16: Grotesque typeface ─────────────────────────────────────
+test('SC16a: Archivo <link> stylesheet is present in document <head>', async ({ page }) => {
+  await freshLoad(page);
+  const archivoLink = await page.evaluate(() => {
+    const links = Array.from(document.querySelectorAll('head link[rel="stylesheet"]'));
+    return links.some((el) => (el as HTMLLinkElement).href.includes('Archivo'));
+  });
+  expect(archivoLink).toBe(true);
+});
+
+test('SC16b: editor element (data-testid=scratchpad-editor) computed font-family contains "Helvetica Neue" and resolves to a sans-serif stack (not serif)', async ({ page }) => {
+  await freshLoad(page);
+  const fontFamily = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="scratchpad-editor"]') as HTMLElement;
+    if (!el) return null;
+    return window.getComputedStyle(el).fontFamily;
+  });
+  expect(fontFamily).not.toBeNull();
+  // Must contain Helvetica Neue (the primary grotesque)
+  expect(fontFamily!).toContain('Helvetica Neue');
+  // Must contain sans-serif as the trailing generic (the grotesque family)
+  expect(fontFamily!).toContain('sans-serif');
+  // Must NOT contain a standalone trailing ", serif" (which would indicate a serif stack)
+  // "sans-serif" is fine; a bare ", serif" at end of stack is the failure case
+  expect(fontFamily!.trim()).not.toMatch(/, serif$/);
+});
+
+test('SC16c: copy buttons (.copy-btn) computed font-family is grotesque (contains "Helvetica Neue", ends in sans-serif)', async ({ page }) => {
+  await freshLoad(page);
+  // Type something so copy buttons are shown
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('typeface test');
+  await page.waitForTimeout(300);
+
+  const copyBtnFont = await page.evaluate(() => {
+    // Get the first copy button
+    const btn = document.querySelector('.copy-btn') as HTMLElement;
+    if (!btn) return null;
+    return window.getComputedStyle(btn).fontFamily;
+  });
+  expect(copyBtnFont).not.toBeNull();
+  expect(copyBtnFont!).toContain('Helvetica Neue');
+  expect(copyBtnFont!).toContain('sans-serif');
+  expect(copyBtnFont!.trim()).not.toMatch(/, serif$/);
+});
+
+test('SC16d: saved-indicator computed font-family is grotesque (contains "Helvetica Neue", ends in sans-serif)', async ({ page }) => {
+  await freshLoad(page);
+  const savedFont = await page.evaluate(() => {
+    const el = document.querySelector('.saved-indicator') as HTMLElement;
+    if (!el) return null;
+    return window.getComputedStyle(el).fontFamily;
+  });
+  expect(savedFont).not.toBeNull();
+  expect(savedFont!).toContain('Helvetica Neue');
+  expect(savedFont!).toContain('sans-serif');
+  expect(savedFont!.trim()).not.toMatch(/, serif$/);
+});
+
+// ─── Success check 17: Snappy typing / no per-keystroke serialization ─────────
+test('SC17a: after a single keystroke, localStorage is NOT yet written (debounce pending)', async ({ page }) => {
+  await freshLoad(page);
+  // Fresh load clears localStorage; now type a single character
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('x');
+
+  // Immediately after one keystroke (before 800ms), localStorage must NOT have been written
+  const valueImmediate = await page.evaluate((key) => {
+    return window.localStorage.getItem(key);
+  }, 'scratchpad-v1');
+
+  // The key must be absent or unchanged (freshLoad cleared it, debounce hasn't fired yet)
+  expect(valueImmediate).toBeNull();
+});
+
+test('SC17b: after 1000ms the debounce has fired and localStorage IS written', async ({ page }) => {
+  await freshLoad(page);
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('debounce proof');
+
+  // Wait for debounce to fire (800ms + 200ms buffer = 1000ms)
+  await page.waitForTimeout(1000);
+
+  const value = await page.evaluate((key) => {
+    return window.localStorage.getItem(key);
+  }, 'scratchpad-v1');
+  expect(value).not.toBeNull();
+  // The stored value should be a valid JSON doc containing "debounce proof"
+  const parsed = JSON.parse(value!);
+  expect(parsed.type).toBe('doc');
+  const text = JSON.stringify(parsed);
+  expect(text).toContain('debounce proof');
+});
+
+test('SC17c: typing many characters rapidly does not drop characters (integrity)', async ({ page }) => {
+  await freshLoad(page);
+  await page.locator(EDITOR).click();
+  // Type a 40-character string as fast as Playwright can
+  const testString = 'abcdefghijklmnopqrstuvwxyz1234567890!@#$';
+  await page.keyboard.type(testString, { delay: 0 });
+  // Wait for editor to settle (no debounce needed — just DOM update)
+  await page.waitForTimeout(200);
+  const editorText = await page.locator(EDITOR).innerText();
+  // All characters must be present (no drops under rapid typing)
+  for (const char of testString) {
+    expect(editorText).toContain(char);
+  }
+  // The total length of the text in the editor should match the string length
+  // (innerText may add newlines; strip them for comparison)
+  const stripped = editorText.replace(/\n/g, '');
+  expect(stripped.length).toBeGreaterThanOrEqual(testString.length);
+});
+
+test('SC17d: many rapid keystrokes do NOT each trigger a localStorage write (debounce coalesces)', async ({ page }) => {
+  await freshLoad(page);
+  await page.locator(EDITOR).click();
+
+  // Install a counter that tracks localStorage.setItem calls for our key
+  await page.evaluate(() => {
+    (window as any).__storageWriteCount = 0;
+    const origSetItem = window.localStorage.setItem.bind(window.localStorage);
+    window.localStorage.setItem = function(key: string, value: string) {
+      if (key === 'scratchpad-v1') {
+        (window as any).__storageWriteCount++;
+      }
+      origSetItem(key, value);
+    };
+  });
+
+  // Type 20 characters rapidly (each fires onUpdate, but NOT a localStorage write)
+  await page.keyboard.type('12345678901234567890', { delay: 20 });
+
+  // Immediately after typing (< 800ms total), writes should be 0
+  const writesImmediately = await page.evaluate(() => (window as any).__storageWriteCount);
+  expect(writesImmediately).toBe(0);
+
+  // Wait for the debounce to fire
+  await page.waitForTimeout(1000);
+
+  // After debounce, exactly 1 write should have occurred (all keystrokes coalesced)
+  const writesAfterDebounce = await page.evaluate(() => (window as any).__storageWriteCount);
+  expect(writesAfterDebounce).toBe(1);
+});
+
 // ─── Copy confirmation survives autosave re-render (live ticking session) ────
 test('SC13b: "Copied" cue is still visible 1s after click despite autosave re-render', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);

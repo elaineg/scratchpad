@@ -61,13 +61,15 @@ export default function Editor() {
         },
       },
       onUpdate({ editor }) {
-        // Update empty state
-        const json = editor.getJSON() as TipTapNode;
-        setIsEmpty(docIsEmpty(json));
+        // Cheap isEmpty check — no serialization on the keystroke path
+        const empty = editor.isEmpty;
+        setIsEmpty((prev) => (prev === empty ? prev : empty));
 
+        // Reset debounce timer; full-doc serialization happens inside the timer only
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = setTimeout(() => {
           try {
+            const json = editor.getJSON() as TipTapNode;
             localStorage.setItem(STORAGE_KEY, JSON.stringify(json));
             // Don't flash "Saved" during the initial restore-from-localStorage
             if (!isRestoringRef.current) {
