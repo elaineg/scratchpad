@@ -311,7 +311,7 @@ body {
   /* Item 9: ~19px pre-scale → 19px at 13px root ≈ 1.46rem (~19px at 13px base) */
   font-size: 1.46rem;
   font-weight: 300;
-  line-height: 1.75;
+  line-height: 1.4;
   color: var(--ink);
   min-height: 60vh;
 }
@@ -332,21 +332,21 @@ body {
 /* Headings — item 9: pre-scale px → rem so root 13px scales them uniformly */
 .scratchpad-editor h1 {
   font-size: 2.46rem;   /* ~32px at 13px base */
-  line-height: 1.25;
+  line-height: 1.0;
   font-weight: 600;
   margin: 1.5em 0 0.5em;
 }
 
 .scratchpad-editor h2 {
   font-size: 2rem;      /* ~26px at 13px base */
-  line-height: 1.3;
+  line-height: 1.05;
   font-weight: 600;
   margin: 1.25em 0 0.4em;
 }
 
 .scratchpad-editor h3 {
   font-size: 1.62rem;   /* ~21px at 13px base */
-  line-height: 1.35;
+  line-height: 1.1;
   font-weight: 600;
   margin: 1em 0 0.35em;
 }

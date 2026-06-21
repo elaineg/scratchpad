@@ -438,3 +438,95 @@ test('SC23-mobile-regression: at 375px no horizontal overflow and column constra
   // Column should fit within the 375px viewport width
   expect(colBox!.x + colBox!.width).toBeLessThanOrEqual(375 + 5); // 5px tolerance
 });
+
+// ─── SC24: Tighter line spacing — computed style checks ──────────────────────
+
+test('SC24-spacing: editor body computed line-height ≈ 1.4× font-size (not 1.75×)', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('[data-testid="scratchpad-editor"]', { state: 'visible', timeout: 10_000 });
+
+  // Type something to ensure a paragraph node exists in the editor
+  await page.locator('[data-testid="scratchpad-editor"]').click();
+  await page.keyboard.type('line spacing test');
+
+  const editorEl = page.locator('.scratchpad-editor');
+  const { lineHeight, fontSize } = await editorEl.evaluate((el) => {
+    const s = window.getComputedStyle(el);
+    return { lineHeight: s.lineHeight, fontSize: s.fontSize };
+  });
+
+  const lhPx = parseFloat(lineHeight);
+  const fsPx = parseFloat(fontSize);
+  const ratio = lhPx / fsPx;
+
+  // Should be ~1.4 (±0.15 tolerance for browser rounding)
+  expect(ratio).toBeGreaterThan(1.2);
+  expect(ratio).toBeLessThan(1.6);
+  // Explicitly not 1.75 (old value would produce ratio > 1.65)
+  expect(ratio).toBeLessThan(1.65);
+});
+
+test('SC24-spacing: editor h1 computed line-height ≈ 1.0× its font-size', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('[data-testid="scratchpad-editor"]', { state: 'visible', timeout: 10_000 });
+
+  await page.locator('[data-testid="scratchpad-editor"]').click();
+  await page.keyboard.type('# Heading One');
+
+  const h1El = page.locator('.scratchpad-editor h1').first();
+  await h1El.waitFor({ state: 'visible', timeout: 5_000 });
+
+  const { lineHeight, fontSize } = await h1El.evaluate((el) => {
+    const s = window.getComputedStyle(el);
+    return { lineHeight: s.lineHeight, fontSize: s.fontSize };
+  });
+
+  const ratio = parseFloat(lineHeight) / parseFloat(fontSize);
+  // h1 line-height: 1.0 → ratio ≈ 1.0 (±0.15)
+  expect(ratio).toBeGreaterThan(0.85);
+  expect(ratio).toBeLessThan(1.2);
+});
+
+test('SC24-spacing: dateline line-height unchanged (still ~1.4) after spacing pass', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('[data-testid="scratchpad-editor"]', { state: 'visible', timeout: 10_000 });
+
+  await page.locator('[data-testid="scratchpad-editor"]').click();
+  await page.keyboard.type('dateline check');
+
+  // Wait for dateline to appear
+  const dateline = page.locator('.scratchpad-editor p.dateline-para').first();
+  await dateline.waitFor({ state: 'visible', timeout: 5_000 });
+
+  const { lineHeight, fontSize } = await dateline.evaluate((el) => {
+    const s = window.getComputedStyle(el);
+    return { lineHeight: s.lineHeight, fontSize: s.fontSize };
+  });
+
+  const ratio = parseFloat(lineHeight) / parseFloat(fontSize);
+  // dateline-para: line-height: 1.4 → ratio ≈ 1.4 (±0.15)
+  expect(ratio).toBeGreaterThan(1.2);
+  expect(ratio).toBeLessThan(1.6);
+});
+
+test('SC24-spacing: editor body has no letter-spacing override (no regression)', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('[data-testid="scratchpad-editor"]', { state: 'visible', timeout: 10_000 });
+
+  await page.locator('[data-testid="scratchpad-editor"]').click();
+  await page.keyboard.type('letter spacing check');
+
+  const letterSpacing = await page.locator('.scratchpad-editor').evaluate((el) => {
+    return window.getComputedStyle(el).letterSpacing;
+  });
+
+  // Browser returns "normal" or "0px" for no letter-spacing override.
+  // Both are acceptable; must NOT be a positive em/px value from an unintended override.
+  const lsPx = parseFloat(letterSpacing);
+  // NaN means "normal" (browser default, no override) — that's fine.
+  // If numeric, it must be ≤ 0.05px (no meaningful positive spacing added).
+  if (!isNaN(lsPx)) {
+    expect(lsPx).toBeLessThanOrEqual(0.05);
+  }
+  // "normal" string is also a passing state — no assertion needed beyond the if-block above.
+});
