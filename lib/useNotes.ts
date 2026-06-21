@@ -97,18 +97,36 @@ export function migrateLegacy(): string | null {
   }
 }
 
-/** Derive a display title from TipTap JSON doc content. */
+/**
+ * Returns true if the given text looks like an auto-inserted dateline.
+ * The dateline format is "Weekday, Month Day" (e.g. "Saturday, June 20")
+ * produced by toLocaleDateString('en-US', {weekday:'long',month:'long',day:'numeric'}).
+ * We match: word(s), comma, space, word(s), space, digits — no 4-digit year.
+ */
+function isDateline(text: string): boolean {
+  return /^\w[\w ]+,\s+\w[\w ]+\s+\d{1,2}$/.test(text.trim());
+}
+
+/** Derive a display title from TipTap JSON doc content.
+ *  Skips any leading paragraph whose text matches the auto-dateline format,
+ *  so the sidebar title derives from the first real typed content.
+ */
 export function deriveTitle(content: object | null | undefined): string {
   if (!content) return "Untitled";
   const doc = content as { content?: Array<{ type: string; content?: Array<{ text?: string }> }> };
   const nodes = doc.content ?? [];
   for (const node of nodes) {
     if (!node.content) continue;
-    for (const child of node.content) {
-      if (child.text && child.text.trim()) {
-        return child.text.trim();
-      }
-    }
+    // Collect the text of this node
+    const nodeText = node.content
+      .map((c) => c.text ?? "")
+      .join("")
+      .trim();
+    // Skip empty nodes
+    if (!nodeText) continue;
+    // Skip dateline lines
+    if (isDateline(nodeText)) continue;
+    return nodeText;
   }
   return "Untitled";
 }

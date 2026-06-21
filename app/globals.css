@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Item 9: root font-size ~20% smaller (16→13px) so all rem sizing scales uniformly */
+html {
+  font-size: 13px;
+}
+
 :root {
   --paper: #FBFAF8;
   --ink: #2B2B29;
@@ -26,6 +31,9 @@ body {
   background: var(--paper);
   color: var(--ink);
   height: 100%;
+  /* Item 9: thinner weight (~300) for calm lighter text */
+  font-weight: 300;
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
 }
 
 /* ─── App Layout ──────────────────────────────────────────────────────────── */
@@ -37,19 +45,20 @@ body {
   position: relative;
 }
 
-/* ─── Left sidebar ────────────────────────────────────────────────────────── */
+/* ─── Left sidebar — BARE TEXT ONLY (item 1: no border, no bg fill, no chrome) ─ */
 
 .notes-sidebar {
   width: var(--sidebar-width);
   min-height: 100vh;
-  background: var(--paper);
-  border-right: 1px solid var(--grey-200);
+  /* No border-right, no background fill — floats on same paper as editor */
+  background: transparent;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   position: relative;
   z-index: 20;
   font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
+  font-weight: 300;
 }
 
 /* Mobile: off-canvas drawer */
@@ -64,40 +73,45 @@ body {
     transition: transform 200ms ease;
     z-index: 100;
     overflow-y: auto;
+    /* On mobile the sidebar overlays editor; give it paper bg so it's readable */
+    background: var(--paper);
   }
 
   .notes-sidebar.open {
     transform: translateX(0);
     box-shadow: none;
-    border-right: 1px solid var(--grey-200);
+    /* No border-right (item 1) */
   }
 }
 
-/* + NEW NOTE button */
+/* + new note — item 2: lowercase, faint grey, same as rows (no border separator) */
 .sidebar-new-note {
-  border-bottom: 1px solid var(--grey-200);
-  padding: 16px 14px 14px;
+  /* No border-bottom (item 1: bare text only) */
+  padding: 16px 14px 8px;
 }
 
 /* On mobile, the fixed hamburger (18px wide + 4px pad + 14px left = ~36px from left edge)
-   overlaps the "+ NEW NOTE" label. Shift the new-note area right so they don't collide. */
+   overlaps the "+ new note" label. Shift the new-note area right so they don't collide. */
 @media (max-width: 640px) {
   .sidebar-new-note {
     padding-left: 44px;
   }
 }
 
+/* Items 2+3: lowercase, faint grey, same typeface/size/weight as all rows */
 .new-note-btn {
   background: none;
   border: none;
   padding: 0;
   cursor: pointer;
   font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
-  font-size: var(--fs-label);
-  letter-spacing: var(--ls-label);
-  color: var(--ink);
-  text-transform: uppercase;
-  line-height: 1.4;
+  font-size: var(--fs-sm);
+  font-weight: 300;
+  /* No letter-spacing, no uppercase — stays lowercase (item 2) */
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--grey-600);
+  line-height: 1.5;
   display: block;
   width: 100%;
   text-align: left;
@@ -107,34 +121,38 @@ body {
 
 .new-note-btn:hover,
 .new-note-btn:focus-visible {
-  opacity: 0.7;
+  color: var(--ink);
 }
 
 /* Notes list */
 .notes-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 4px 0;
   flex: 1;
   overflow-y: auto;
 }
 
-/* Each note row */
+/* Each note row — item 1: no border-bottom separator */
 .note-row {
-  border-bottom: 1px solid var(--grey-200);
+  /* No border-bottom (bare text only) */
   position: relative;
 }
 
+/* Item 3: same typeface/size/weight/faint-grey as "+ new note" — unified treatment */
 .note-row-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 10px 14px;
+  padding: 5px 14px;
   background: none;
   border: none;
   cursor: pointer;
   font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
+  font-size: var(--fs-sm);
+  font-weight: 300;
+  color: var(--grey-600);
   text-align: left;
   outline: none;
   -webkit-tap-highlight-color: transparent;
@@ -143,34 +161,37 @@ body {
 
 .note-row-btn:hover,
 .note-row-btn:focus-visible {
-  background: var(--grey-50);
+  /* No bg fill — just ink color on hover (consistent with bare-text aesthetic) */
+  color: var(--ink);
 }
 
-/* Active row: ink fill, paper text */
+/* Item 4: ACTIVE row = ink color ONLY — no fill, no inversion, no pill, no shading */
 .note-row.active .note-row-btn {
-  background: var(--ink);
-  color: var(--paper);
+  color: var(--ink);
+  font-weight: 400; /* subtle weight bump as permitted by spec */
+  background: none;
 }
 
 .note-row.active .note-row-btn:hover {
-  background: var(--ink);
-  opacity: 0.92;
+  color: var(--ink);
+  background: none;
 }
 
 .note-title {
   font-size: var(--fs-sm);
+  font-weight: inherit;
   color: inherit;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
   min-width: 0;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
-/* Delete glyph — hidden at rest, shown on hover */
+/* Delete glyph — hidden at rest, shown on hover (item 6: no confirm, quiet affordance) */
 .note-delete-glyph {
-  font-size: 16px;
+  font-size: 14px;
   color: var(--grey-600);
   flex-shrink: 0;
   opacity: 0;
@@ -186,65 +207,20 @@ body {
   opacity: 1;
 }
 
+/* On active row: delete glyph uses ink color (matches active text) */
 .note-row.active .note-delete-glyph {
-  color: var(--paper);
+  color: var(--grey-600);
   opacity: 0;
 }
 
 .note-row.active .note-row-btn:hover .note-delete-glyph {
-  color: var(--paper);
+  color: var(--ink);
   opacity: 0.7;
 }
 
 .note-delete-glyph:hover {
   color: var(--ink) !important;
   opacity: 1 !important;
-}
-
-/* Delete confirm inline */
-.note-delete-confirm {
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.delete-confirm-label {
-  font-size: var(--fs-micro);
-  letter-spacing: var(--ls-micro);
-  text-transform: uppercase;
-  color: var(--ink);
-  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
-}
-
-.delete-confirm-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.delete-confirm-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
-  font-size: var(--fs-micro);
-  letter-spacing: var(--ls-micro);
-  text-transform: uppercase;
-  outline: none;
-}
-
-.delete-confirm-btn.confirm {
-  color: var(--ink);
-  text-decoration: underline;
-}
-
-.delete-confirm-btn.cancel {
-  color: var(--grey-600);
-}
-
-.delete-confirm-btn:hover {
-  opacity: 0.7;
 }
 
 /* Mobile overlay behind drawer */
@@ -320,7 +296,9 @@ body {
   outline: none;
   caret-color: var(--ink);
   font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
-  font-size: 19px;
+  /* Item 9: ~19px pre-scale → 19px at 13px root ≈ 1.46rem (~19px at 13px base) */
+  font-size: 1.46rem;
+  font-weight: 300;
   line-height: 1.75;
   color: var(--ink);
   min-height: 60vh;
@@ -339,23 +317,23 @@ body {
   pointer-events: none;
 }
 
-/* Headings */
+/* Headings — item 9: pre-scale px → rem so root 13px scales them uniformly */
 .scratchpad-editor h1 {
-  font-size: 32px;
+  font-size: 2.46rem;   /* ~32px at 13px base */
   line-height: 1.25;
   font-weight: 600;
   margin: 1.5em 0 0.5em;
 }
 
 .scratchpad-editor h2 {
-  font-size: 26px;
+  font-size: 2rem;      /* ~26px at 13px base */
   line-height: 1.3;
   font-weight: 600;
   margin: 1.25em 0 0.4em;
 }
 
 .scratchpad-editor h3 {
-  font-size: 21px;
+  font-size: 1.62rem;   /* ~21px at 13px base */
   line-height: 1.35;
   font-weight: 600;
   margin: 1em 0 0.35em;
@@ -369,6 +347,17 @@ body {
 
 .scratchpad-editor p:last-child {
   margin-bottom: 0;
+}
+
+/* Item 7: dateline paragraph — very faint (--grey-600), body size or smaller,
+   NO blank gap below so the first typed line sits directly under it, tight. */
+.scratchpad-editor p.dateline-para {
+  color: var(--grey-600);
+  font-size: 0.85em;   /* slightly smaller than body */
+  font-weight: 300;
+  line-height: 1.4;
+  margin-bottom: 0.15em; /* tight — no blank gap between dateline and first typed line */
+  margin-top: 0;
 }
 
 /* Lists */
@@ -439,68 +428,6 @@ body {
 
 .scratchpad-editor em {
   font-style: italic;
-}
-
-/* ─── Single copy icon — fixed top-right corner ─── */
-
-.copy-actions {
-  position: fixed;
-  top: 20px;
-  right: 24px;
-  display: flex;
-  align-items: center;
-  /* Opacity transition only — NO layout shift, NO slide */
-  transition: opacity 250ms ease;
-  z-index: 10;
-}
-
-.copy-icon-btn {
-  background: none;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  color: var(--grey-600);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  outline: none;
-  -webkit-tap-highlight-color: transparent;
-  transition: color 150ms ease;
-}
-
-.copy-icon-btn:hover,
-.copy-icon-btn:focus-visible {
-  color: var(--ink);
-}
-
-/* Confirm state: checkmark + COPIED label */
-.copy-confirm {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--ink);
-  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
-}
-
-.copy-blocked {
-  display: flex;
-  align-items: center;
-  color: var(--grey-600);
-  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
-}
-
-.copy-label {
-  font-size: var(--fs-micro);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-@media (max-width: 640px) {
-  .copy-actions {
-    top: 14px;
-    right: 14px;
-  }
 }
 
 /* ─── Character count — lower-right of writing surface ─── */

@@ -4,12 +4,29 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import { docToHtml, docToMarkdown, TipTapNode } from "../lib/docSerializer";
+import Paragraph from "@tiptap/extension-paragraph";
 import { saveNote } from "../lib/useNotes";
+import type { TipTapNode } from "../lib/docSerializer";
+
+// Extend the default Paragraph to allow a "class" HTML attribute so we can
+// mark the auto-dateline paragraph for faint styling (item 7).
+const ParagraphWithClass = Paragraph.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      class: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("class") || null,
+        renderHTML: (attrs) => {
+          if (!attrs.class) return {};
+          return { class: attrs.class };
+        },
+      },
+    };
+  },
+});
 
 const SAVE_DEBOUNCE_MS = 800;
-
-type CopyState = "idle" | "copied" | "blocked";
 
 interface EditorProps {
   noteId: string;
@@ -32,11 +49,6 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
 
   // Guard: don't flash "Saved" during the initial content restore
   const isRestoringRef = useRef(false);
-
-  // Copy state
-  const [isEmpty, setIsEmpty] = useState(true);
-  const [copyState, setCopyState] = useState<CopyState>("idle");
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Character count (cheap — updated on editor transaction)
   const [charCount, setCharCount] = useState(0);
@@ -61,7 +73,9 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
     {
       immediatelyRender: false,
       extensions: [
-        StarterKit,
+        // Exclude the built-in paragraph so we can use our class-aware version
+        StarterKit.configure({ paragraph: false }),
+        ParagraphWithClass,
         Placeholder.configure({
           placeholder: "Start typing…",
         }),
@@ -83,7 +97,6 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
 
         // Cheap isEmpty check — no serialization on the keystroke path
         const empty = editor.isEmpty;
-        setIsEmpty((prev) => (prev === empty ? prev : empty));
 
         // Cheap char count — getText() is lighter than getJSON() for counting
         const text = editor.getText();
@@ -107,9 +120,15 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
             if (!editor || editor.isDestroyed) return;
             isInsertingDatelineRef.current = true;
 
-            // Insert date paragraph at the very beginning of the doc
+            // Insert date paragraph at the very beginning of the doc.
+            // The paragraph carries a data-dateline attribute so CSS can style it
+            // as very faint and small (item 7).
             editor.chain()
-              .insertContentAt(0, { type: "paragraph", content: [{ type: "text", text: dateStr }] })
+              .insertContentAt(0, {
+                type: "paragraph",
+                attrs: { class: "dateline-para" },
+                content: [{ type: "text", text: dateStr }],
+              })
               // Move caret to end of the document (which is now the line after the dateline)
               .focus("end")
               .run();
@@ -162,7 +181,6 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
 
     // Update empty state and char count based on restored content
     const empty = editor.isEmpty;
-    setIsEmpty(empty);
     setCharCount(editor.getText().length);
     onContentChange?.(empty);
 
@@ -211,40 +229,13 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       if (showSavedTimerRef.current) clearTimeout(showSavedTimerRef.current);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     };
   }, []);
-
-  const handleCopy = useCallback(async () => {
-    if (!editor) return;
-    const doc = editor.getJSON() as TipTapNode;
-    const html = docToHtml(doc);
-    const plain = docToMarkdown(doc);
-    try {
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          "text/html": new Blob([html], { type: "text/html" }),
-          "text/plain": new Blob([plain], { type: "text/plain" }),
-        }),
-      ]);
-      setCopyState("copied");
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopyState("idle"), 1800);
-    } catch {
-      setCopyState("blocked");
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopyState("idle"), 3000);
-    }
-    // Restore focus to editor without shifting layout
-    editor.commands.focus();
-  }, [editor]);
 
   // SSR / pre-hydration: render nothing
   if (!mounted) {
     return null;
   }
-
-  const showCopy = !isEmpty;
 
   return (
     <>
@@ -270,59 +261,6 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
         aria-atomic="true"
       >
         {charCount.toLocaleString()}
-      </div>
-
-      {/* Single copy icon — fixed top-right, outside the writing column */}
-      <div
-        className="copy-actions"
-        style={{ opacity: showCopy ? 1 : 0, pointerEvents: showCopy ? "auto" : "none" }}
-        aria-hidden={!showCopy}
-      >
-        {copyState === "copied" ? (
-          <div className="copy-confirm" data-testid="copy-icon-confirm" role="status" aria-live="polite">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-              aria-hidden="true"
-            >
-              <polyline points="2,8 6,12 14,4" />
-            </svg>
-            <span className="copy-label">COPIED</span>
-          </div>
-        ) : copyState === "blocked" ? (
-          <div className="copy-blocked" data-testid="copy-icon-blocked" role="alert">
-            <span className="copy-label">COPY BLOCKED — SELECT ALL &amp; ⌘C</span>
-          </div>
-        ) : (
-          <button
-            className="copy-icon-btn"
-            data-testid="copy-icon-btn"
-            aria-label="Copy note as rich text"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleCopy}
-            tabIndex={showCopy ? 0 : -1}
-          >
-            {/* Two-rectangle copy glyph, 1px stroke */}
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-              aria-hidden="true"
-            >
-              {/* Back rect */}
-              <rect x="4" y="1" width="10" height="12" rx="0" />
-              {/* Front rect */}
-              <rect x="1" y="4" width="10" height="12" rx="0" />
-            </svg>
-          </button>
-        )}
       </div>
     </>
   );

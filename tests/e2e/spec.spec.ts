@@ -5,8 +5,6 @@
 import { test, expect, Page } from '@playwright/test';
 
 const EDITOR = '[data-testid="scratchpad-editor"]';
-const COPY_BTN = '[data-testid="copy-icon-btn"]';
-const COPY_ACTIONS = '.copy-actions';
 const NEW_NOTE_BTN = '[data-testid="new-note-btn"]';
 const NOTES_SIDEBAR = '[data-testid="notes-sidebar"]';
 
@@ -247,19 +245,16 @@ test('SC7: converting a paragraph line to heading does not cause other lines to 
 });
 
 // ─── SC8: sidebar is present, no toolbar or formatting buttons ───────────────
-test('SC8: sidebar is visible; no toolbar, menu bar, or visible formatting buttons on cold load', async ({ page }) => {
+test('SC8: sidebar is visible; no toolbar, menu bar, formatting buttons, or copy control on cold load', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await freshLoad(page);
   // Sidebar should be present at desktop width
   await expect(page.locator(NOTES_SIDEBAR)).toBeVisible();
-  // NEW NOTE button is present
+  // NEW NOTE button is present (lowercase per spec)
   await expect(page.locator(NEW_NOTE_BTN)).toBeVisible();
-  // Copy actions are in the DOM but hidden on a blank note
-  const copyActions = page.locator(COPY_ACTIONS);
-  const ariaHidden = await copyActions.getAttribute('aria-hidden');
-  expect(ariaHidden).toBe('true');
-  const opacity = await copyActions.evaluate((el) => parseFloat(window.getComputedStyle(el).opacity));
-  expect(opacity).toBe(0);
+  // No copy icon or copy actions — removed per item 8
+  expect(await page.locator('.copy-actions').count()).toBe(0);
+  expect(await page.locator('[data-testid="copy-icon-btn"]').count()).toBe(0);
   // Main writing surface is present
   await expect(page.locator('[data-testid="writing-surface"]')).toBeVisible();
 });
@@ -404,69 +399,49 @@ test('FIX3c: "Saved" DOES appear after typing new content (debounce + indicator)
   await expect(page.locator('.saved-indicator.show')).toBeVisible({ timeout: 3000 });
 });
 
-// ─── SC10 (new): Single copy ICON (not text buttons) is the only copy control ─
-test('SC10: single copy ICON visible on non-empty note; NO markdown-text button anywhere', async ({ page }) => {
+// ─── SC18 (new): NO copy control anywhere in the UI (copy feature fully removed) ─
+test('SC18: no copy icon, copy button, or copy confirmation anywhere — on blank or non-empty note', async ({ page }) => {
   await freshLoad(page);
-  // On blank load: copy actions hidden
-  const copyActions = page.locator(COPY_ACTIONS);
-  expect(await copyActions.getAttribute('aria-hidden')).toBe('true');
-  const opacityBefore = await copyActions.evaluate((el) =>
-    parseFloat(window.getComputedStyle(el).opacity)
-  );
-  expect(opacityBefore).toBe(0);
+  // No copy-related elements on blank load
+  expect(await page.locator('.copy-actions').count()).toBe(0);
+  expect(await page.locator('[data-testid="copy-icon-btn"]').count()).toBe(0);
+  expect(await page.locator('[data-testid="copy-icon-confirm"]').count()).toBe(0);
+  expect(await page.locator('[data-testid="copy-icon-blocked"]').count()).toBe(0);
 
-  // Type something — single icon should appear
+  // Type something — still no copy control
   await page.locator(EDITOR).click();
   await page.keyboard.type('hello');
   await page.waitForTimeout(300);
-  expect(await copyActions.getAttribute('aria-hidden')).toBe('false');
-  const opacityAfter = await copyActions.evaluate((el) =>
-    parseFloat(window.getComputedStyle(el).opacity)
-  );
-  expect(opacityAfter).toBeGreaterThan(0);
+  expect(await page.locator('.copy-actions').count()).toBe(0);
+  expect(await page.locator('[data-testid="copy-icon-btn"]').count()).toBe(0);
 
-  // Single copy icon button is present
-  await expect(page.locator(COPY_BTN)).toBeVisible();
-
-  // There must be NO "Copy as Markdown" or "copy-md-btn" anywhere
-  expect(await page.locator('[data-testid="copy-md-btn"]').count()).toBe(0);
-  expect(await page.locator('[data-testid="copy-rich-btn"]').count()).toBe(0);
-
-  // Delete all content — copy should hide
-  await page.keyboard.press('Meta+a');
-  await page.keyboard.press('Backspace');
-  await page.waitForTimeout(300);
-  expect(await copyActions.getAttribute('aria-hidden')).toBe('true');
+  // No copy-related text in the page
+  const pageContent = await page.content();
+  expect(pageContent).not.toContain('copy-icon-btn');
+  expect(pageContent).not.toContain('ClipboardItem');
 });
 
-// ─── SC13: Copy icon confirmation persists for >=1.5s ─────────────────────────
-test('SC13: copy icon confirmation persists for >=1.5s and survives autosave', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+// ─── SC13 (updated): Sidebar — new-note lowercase + faint grey ───────────────
+test('SC13: "+ new note" button text is lowercase and faint grey (not uppercase)', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
   await freshLoad(page);
-  await page.locator(EDITOR).click();
-  await page.keyboard.type('## Title');
-
-  // Wait for copy button to appear
-  await page.waitForTimeout(300);
-  await page.locator(COPY_BTN).click();
-
-  // Immediately check — should show copied confirmation
-  await expect(page.locator('[data-testid="copy-icon-confirm"]')).toBeVisible({ timeout: 1000 });
-
-  // After 1s it should STILL show the confirmation (holds for 1.8s)
-  await page.waitForTimeout(1000);
-  await expect(page.locator('[data-testid="copy-icon-confirm"]')).toBeVisible();
+  const newNoteBtn = page.locator(NEW_NOTE_BTN);
+  await expect(newNoteBtn).toBeVisible();
+  // Text must be lowercase
+  const btnText = await newNoteBtn.innerText();
+  expect(btnText.trim()).toMatch(/^\+ new note$/i);
+  expect(btnText.trim()).not.toMatch(/NEW NOTE/);
+  // Color should be faint grey (--grey-600 = #706D67)
+  const color = await newNoteBtn.evaluate((el) => window.getComputedStyle(el).color);
+  // Should NOT be full ink (#2B2B29 = rgb(43,43,41))
+  expect(color).not.toMatch(/rgb\(43,\s*43,\s*41\)/);
 });
 
-// ─── SC14: No focus-steal / no layout jump ────────────────────────────────────
-test('SC14: clicking copy icon does not steal focus from editor', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+// ─── SC14 (updated): No copy control, editor retains focus after typing ───────
+test('SC14: editor stays focused after typing; no copy button to distract', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
   await page.keyboard.type('some text');
-  await page.waitForTimeout(300);
-
-  await page.locator(COPY_BTN).click();
   await page.waitForTimeout(200);
 
   // Editor should still be focused
@@ -475,10 +450,12 @@ test('SC14: clicking copy icon does not steal focus from editor', async ({ page,
     return editor ? editor.contains(document.activeElement) : false;
   });
   expect(isFocused).toBe(true);
+  // No copy button anywhere
+  expect(await page.locator('[data-testid="copy-icon-btn"]').count()).toBe(0);
 });
 
-// ─── SC15: Mobile safe at 375px ──────────────────────────────────────────────
-test('SC15: copy icon stays within viewport at 375px, no horizontal overflow', async ({ page }) => {
+// ─── SC15 (updated): Mobile safe at 375px, no copy control, no overflow ───────
+test('SC15: at 375px no horizontal overflow; no copy icon present', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await freshLoad(page);
   await page.locator(EDITOR).click();
@@ -491,134 +468,9 @@ test('SC15: copy icon stays within viewport at 375px, no horizontal overflow', a
   });
   expect(overflow).toBe(false);
 
-  // Copy actions must be within viewport bounds
-  const copyBounds = await page.locator(COPY_ACTIONS).boundingBox();
-  expect(copyBounds).not.toBeNull();
-  expect(copyBounds!.x).toBeGreaterThanOrEqual(0);
-  expect(copyBounds!.x + copyBounds!.width).toBeLessThanOrEqual(375 + 1);
-});
-
-// ─── SC12: Copy icon writes real HTML tags ────────────────────────────────────
-test('SC12: copy icon ClipboardItem contains real HTML tags not markdown', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await freshLoad(page);
-
-  // Intercept navigator.clipboard.write to inspect the ClipboardItem payload
-  await page.addInitScript(() => {
-    (window as any).__clipboardRichWrites = [];
-    const orig = navigator.clipboard.write.bind(navigator.clipboard);
-    Object.defineProperty(navigator.clipboard, 'write', {
-      value: async (items: ClipboardItem[]) => {
-        for (const item of items) {
-          if (item.types.includes('text/html')) {
-            const blob = await item.getType('text/html');
-            const text = await blob.text();
-            (window as any).__clipboardRichWrites.push({ html: text });
-          }
-        }
-        return orig(items);
-      },
-      writable: true,
-      configurable: true,
-    });
-  });
-
-  // Seed bold content via multi-note localStorage
-  const noteId = 'html-copy-test';
-  await page.evaluate(({ id }) => {
-    window.localStorage.clear();
-    const doc = {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [{ type: 'text', text: 'bold', marks: [{ type: 'bold' }] }],
-        },
-        {
-          type: 'heading',
-          attrs: { level: 2 },
-          content: [{ type: 'text', text: 'Heading' }],
-        },
-        {
-          type: 'bulletList',
-          content: [
-            { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'bullet' }] }] },
-          ],
-        },
-        { type: 'horizontalRule' },
-      ],
-    };
-    const record = { id, content: doc, updatedAt: Date.now() };
-    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
-    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
-    window.localStorage.setItem('scratchpad-active-id', id);
-  }, { id: noteId });
-  await page.reload();
-  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
-  await page.waitForTimeout(300);
-
-  await page.locator(COPY_BTN).click();
-  await page.waitForTimeout(500);
-
-  const writes = await page.evaluate(() => (window as any).__clipboardRichWrites ?? []);
-  expect(writes.length).toBeGreaterThan(0);
-  const htmlPayload = writes[writes.length - 1]?.html ?? '';
-
-  // Must contain real HTML elements — not literal markdown asterisks
-  expect(htmlPayload).toContain('<strong>bold</strong>');
-  expect(htmlPayload).toContain('<h2>Heading</h2>');
-  expect(htmlPayload).toContain('<ul>');
-  expect(htmlPayload).toContain('<li>bullet</li>');
-  expect(htmlPayload).toContain('<hr/>');
-
-  // Must NOT contain markdown syntax
-  expect(htmlPayload).not.toContain('**');
-  expect(htmlPayload).not.toContain('## ');
-});
-
-// ─── Hostile clipboard: blocked clipboard shows "Copy blocked" (not silent) ───
-test('Hostile clipboard: blocked clipboard shows explicit "COPY BLOCKED" state', async ({ page }) => {
-  await page.goto('/');
-  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
-
-  // Seed content
-  const noteId = 'blocked-test';
-  await page.evaluate(({ id }) => {
-    window.localStorage.clear();
-    const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'blocked test' }] }] };
-    const record = { id, content: doc, updatedAt: Date.now() };
-    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
-    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
-    window.localStorage.setItem('scratchpad-active-id', id);
-  }, { id: noteId });
-
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, 'clipboard', {
-      value: {
-        writeText: () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')),
-        write: () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')),
-        readText: () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')),
-        read: () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')),
-      },
-      configurable: true,
-    });
-  });
-  await page.reload();
-  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
-  await page.waitForTimeout(300);
-
-  const isBlocked = await page.evaluate(async () => {
-    try { await navigator.clipboard.writeText('test'); return false; } catch { return true; }
-  });
-  expect(isBlocked).toBe(true);
-
-  await page.locator(COPY_BTN).click();
-  await page.waitForTimeout(200);
-
-  // Must show "COPY BLOCKED" element (role=alert)
-  await expect(page.locator('[data-testid="copy-icon-blocked"]')).toBeVisible({ timeout: 2000 });
-  // Must NOT show success confirm
-  expect(await page.locator('[data-testid="copy-icon-confirm"]').count()).toBe(0);
+  // No copy icon at all — removed per item 8
+  expect(await page.locator('[data-testid="copy-icon-btn"]').count()).toBe(0);
+  expect(await page.locator('.copy-actions').count()).toBe(0);
 });
 
 // ─── SC16a: Grotesque typeface ─────────────────────────────────────────────────
@@ -742,21 +594,24 @@ test('SC17d: many rapid keystrokes do NOT each trigger a localStorage write (deb
   expect(writesAfterDebounce).toBe(1);
 });
 
-// ─── Copy confirmation survives autosave re-render ────────────────────────────
-test('SC13b: copy confirm visible 1s after click despite autosave re-render', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await freshLoad(page);
-  await page.locator(EDITOR).click();
-  await page.keyboard.type('autosave survivor test content');
-
+// ─── SC13b (updated): autosave does not flash "Saved" spuriously ─────────────
+test('SC13b: "Saved" does not appear on initial restore of existing note', async ({ page }) => {
+  const noteId = 'autosave-restore-test';
+  await page.goto('/');
+  await page.evaluate(({ id }) => {
+    window.localStorage.clear();
+    const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'autosave test' }] }] };
+    const record = { id, content: doc, updatedAt: Date.now() };
+    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
+    window.localStorage.setItem('scratchpad-active-id', id);
+  }, { id: noteId });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
   await page.waitForTimeout(1200);
-  await page.keyboard.type('x');
-
-  await page.locator(COPY_BTN).click();
-  await expect(page.locator('[data-testid="copy-icon-confirm"]')).toBeVisible({ timeout: 1000 });
-
-  await page.waitForTimeout(900);
-  await expect(page.locator('[data-testid="copy-icon-confirm"]')).toBeVisible();
+  // "Saved" must not appear spuriously on restore
+  const showCount = await page.locator('.saved-indicator.show').count();
+  expect(showCount).toBe(0);
 });
 
 // ─── SC9 Sidebar: new note + instant typing ────────────────────────────────────
@@ -803,8 +658,8 @@ test('SC10-sidebar: note title derives from first line; most-recent note is firs
   await expect(page.locator(NOTES_SIDEBAR)).toContainText('Sprint plan', { timeout: 3000 });
 });
 
-// ─── SC11 Sidebar: active-by-inversion ────────────────────────────────────────
-test('SC11-sidebar: active note row has ink fill (inversion)', async ({ page }) => {
+// ─── SC11 Sidebar: active-by-ink-color-only (no inversion, no fill) ───────────
+test('SC11-sidebar: active note row has ink TEXT color only (no fill/inversion)', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   // Seed two notes
   await page.goto('/');
@@ -828,12 +683,26 @@ test('SC11-sidebar: active note row has ink fill (inversion)', async ({ page }) 
   const activeRow = page.locator(`[data-testid="note-row-${noteId2}"]`);
   await expect(activeRow).toHaveClass(/active/);
 
-  // Computed background of active row button should be dark (ink)
+  // Active row: ink TEXT color (not background fill)
+  const color = await page.locator(`[data-testid="note-select-${noteId2}"]`).evaluate((el) =>
+    window.getComputedStyle(el).color
+  );
+  // rgb(43, 43, 41) = #2B2B29 (ink)
+  expect(color).toMatch(/rgb\(43,\s*43,\s*41\)/);
+
+  // Active row: background must NOT be the ink color (no inversion)
   const bg = await page.locator(`[data-testid="note-select-${noteId2}"]`).evaluate((el) =>
     window.getComputedStyle(el).backgroundColor
   );
-  // rgb(43, 43, 41) = #2B2B29 (ink)
-  expect(bg).toMatch(/rgb\(43,\s*43,\s*41\)/);
+  // Background should be transparent or paper — NOT ink
+  expect(bg).not.toMatch(/rgb\(43,\s*43,\s*41\)/);
+
+  // Inactive row: text color is faint grey (--grey-600 ~= rgb(112,109,103))
+  const inactiveColor = await page.locator(`[data-testid="note-select-${noteId1}"]`).evaluate((el) =>
+    window.getComputedStyle(el).color
+  );
+  // Should NOT be full ink
+  expect(inactiveColor).not.toMatch(/rgb\(43,\s*43,\s*41\)/);
 });
 
 // ─── SC12 Sidebar: switch saves & restores (returning-user regression) ─────────
@@ -868,8 +737,8 @@ test('SC12-sidebar: switch between notes saves and restores content; reload pers
   await expect(noteRowsAfterReload).toHaveCount(2, { timeout: 3000 });
 });
 
-// ─── SC13 Sidebar: delete with confirm ────────────────────────────────────────
-test('SC13-sidebar: delete affordance shows confirm; confirming removes note', async ({ page }) => {
+// ─── SC13 Sidebar: delete immediately with NO confirm (item 6) ────────────────
+test('SC13-sidebar: clicking × deletes note IMMEDIATELY with no confirm dialog', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   // Seed two notes
   await page.goto('/');
@@ -888,20 +757,18 @@ test('SC13-sidebar: delete affordance shows confirm; confirming removes note', a
   await page.reload();
   await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
 
-  // Hover to reveal delete glyph, click it
+  // Hover to reveal delete glyph, click it — immediate deletion, no confirm
   await page.locator(`[data-testid="note-select-${noteId2}"]`).hover();
   await page.locator(`[data-testid="delete-note-${noteId2}"]`).click({ force: true });
 
-  // Confirm inline appears
-  await expect(page.locator(`[data-testid="confirm-delete-${noteId2}"]`)).toBeVisible({ timeout: 2000 });
+  // No confirm dialog should appear (item 6)
+  expect(await page.locator(`[data-testid="confirm-delete-${noteId2}"]`).count()).toBe(0);
 
-  // Confirm deletion
-  await page.locator(`[data-testid="confirm-delete-${noteId2}"]`).click();
-  await page.waitForTimeout(300);
-
-  // Note to delete is gone; note to keep remains
+  // Deletion is immediate — note is gone right away
+  await page.waitForTimeout(200);
   expect(await page.locator('.note-row').count()).toBe(1);
   await expect(page.locator(NOTES_SIDEBAR)).toContainText('note to keep');
+  await expect(page.locator(NOTES_SIDEBAR)).not.toContainText('note to delete');
 });
 
 // ─── SC18: Character count ─────────────────────────────────────────────────────

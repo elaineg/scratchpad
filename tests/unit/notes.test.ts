@@ -64,6 +64,58 @@ describe('deriveTitle', () => {
     };
     expect(deriveTitle(doc)).toBe('My Note');
   });
+
+  // Item 5: deriveTitle must SKIP the auto-dateline line and derive from real content
+  it('skips auto-dateline first line and returns first real typed content', () => {
+    const doc = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Saturday, June 20' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'meeting notes' }] },
+      ],
+    };
+    expect(deriveTitle(doc)).toBe('meeting notes');
+  });
+
+  it('returns "Untitled" when doc has only a dateline and no typed content', () => {
+    const doc = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Friday, June 19' }] },
+      ],
+    };
+    expect(deriveTitle(doc)).toBe('Untitled');
+  });
+
+  it('skips a dateline-like first line with various weekday/month combos', () => {
+    const cases = [
+      'Monday, January 1',
+      'Wednesday, March 15',
+      'Sunday, December 31',
+      'Thursday, October 3',
+    ];
+    for (const dateStr of cases) {
+      const doc = {
+        type: 'doc',
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: dateStr }] },
+          { type: 'paragraph', content: [{ type: 'text', text: 'actual content' }] },
+        ],
+      };
+      expect(deriveTitle(doc)).toBe('actual content');
+    }
+  });
+
+  it('does NOT skip a first line that merely starts with a word and comma (not a valid dateline)', () => {
+    // "Hello, world" is NOT a dateline — no day number at the end
+    const doc = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Hello, world' }] },
+      ],
+    };
+    expect(deriveTitle(doc)).toBe('Hello, world');
+  });
 });
 
 // ─── Dateline format ──────────────────────────────────────────────────────────
