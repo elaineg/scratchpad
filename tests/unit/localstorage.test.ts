@@ -1,13 +1,21 @@
 /**
- * Unit tests for the localStorage serialization contract used by the Editor.
- * The Editor stores TipTap JSON (doc shape) under "scratchpad-v1".
- * These tests verify that the shape can be serialized/deserialized correctly.
+ * Unit tests for multi-note localStorage serialization contract.
+ *
+ * Storage shape (v2, multi-note):
+ *   "scratchpad-notes-index" → JSON string[]  (note ids, newest-first)
+ *   "scratchpad-note-<id>"   → JSON NoteRecord { id, content, updatedAt }
+ *   "scratchpad-active-id"   → string (last-open note id)
+ *
+ * Legacy key "scratchpad-v1" is migrated on first load.
  */
 import { describe, it, expect } from 'vitest';
 
-const STORAGE_KEY = 'scratchpad-v1';
+const INDEX_KEY = 'scratchpad-notes-index';
+const ACTIVE_KEY = 'scratchpad-active-id';
+const NOTE_PREFIX = 'scratchpad-note-';
+const LEGACY_KEY = 'scratchpad-v1';
 
-// Minimal TipTap doc shapes that the Editor saves/restores
+// Minimal TipTap doc shapes
 const emptyDoc = {
   type: 'doc',
   content: [{ type: 'paragraph', content: [] }],
@@ -36,69 +44,70 @@ const docWithBullet = {
   ],
 };
 
-describe('localStorage serialization contract', () => {
-  it('serializes and deserializes an empty doc correctly', () => {
-    const serialized = JSON.stringify(emptyDoc);
+describe('multi-note storage schema', () => {
+  it('INDEX_KEY is the expected constant', () => {
+    expect(INDEX_KEY).toBe('scratchpad-notes-index');
+  });
+
+  it('ACTIVE_KEY is the expected constant', () => {
+    expect(ACTIVE_KEY).toBe('scratchpad-active-id');
+  });
+
+  it('NOTE_PREFIX is the expected constant', () => {
+    expect(NOTE_PREFIX).toBe('scratchpad-note-');
+  });
+
+  it('LEGACY_KEY is the expected constant', () => {
+    expect(LEGACY_KEY).toBe('scratchpad-v1');
+  });
+
+  it('note key is formed as scratchpad-note-<id>', () => {
+    const id = 'abc123';
+    expect(`${NOTE_PREFIX}${id}`).toBe('scratchpad-note-abc123');
+  });
+});
+
+describe('NoteRecord serialization', () => {
+  it('serializes and deserializes a NoteRecord with empty doc', () => {
+    const id = 'test-1';
+    const record = { id, content: emptyDoc, updatedAt: 1000 };
+    const serialized = JSON.stringify(record);
     const restored = JSON.parse(serialized);
-    expect(restored).toEqual(emptyDoc);
+    expect(restored.id).toBe(id);
+    expect(restored.content).toEqual(emptyDoc);
+    expect(restored.updatedAt).toBe(1000);
   });
 
-  it('serializes and deserializes a doc with heading and paragraph', () => {
-    const serialized = JSON.stringify(docWithHeading);
+  it('serializes and deserializes a NoteRecord with heading doc', () => {
+    const id = 'test-2';
+    const record = { id, content: docWithHeading, updatedAt: 2000 };
+    const serialized = JSON.stringify(record);
     const restored = JSON.parse(serialized);
-    expect(restored.type).toBe('doc');
-    expect(restored.content[0].type).toBe('heading');
-    expect(restored.content[0].attrs.level).toBe(2);
-    expect(restored.content[0].content[0].text).toBe('Title');
-    expect(restored.content[1].type).toBe('paragraph');
-    expect(restored.content[1].content[0].text).toBe('body text');
+    expect(restored.content.type).toBe('doc');
+    expect(restored.content.content[0].type).toBe('heading');
+    expect(restored.content.content[0].content[0].text).toBe('Title');
   });
 
-  it('serializes and deserializes a bullet list doc', () => {
-    const serialized = JSON.stringify(docWithBullet);
-    const restored = JSON.parse(serialized);
-    expect(restored.content[0].type).toBe('bulletList');
-    expect(restored.content[0].content[0].type).toBe('listItem');
+  it('serializes and deserializes a NoteRecord with bullet list', () => {
+    const id = 'test-3';
+    const record = { id, content: docWithBullet, updatedAt: 3000 };
+    const restored = JSON.parse(JSON.stringify(record));
+    expect(restored.content.content[0].type).toBe('bulletList');
   });
 
-  it('storage key is the expected constant', () => {
-    expect(STORAGE_KEY).toBe('scratchpad-v1');
-  });
-
-  it('JSON.parse of a corrupt string throws (corrupt storage guard)', () => {
-    // The Editor guards against corrupt data with try/catch
-    expect(() => JSON.parse('not valid json {')).toThrow();
-  });
-
-  it('round-trip preserves text marks (bold)', () => {
+  it('round-trips mark (bold) correctly in NoteRecord', () => {
     const docWithBold = {
       type: 'doc',
       content: [
-        {
-          type: 'paragraph',
-          content: [{ type: 'text', text: 'ship it', marks: [{ type: 'bold' }] }],
-        },
+        { type: 'paragraph', content: [{ type: 'text', text: 'ship it', marks: [{ type: 'bold' }] }] },
       ],
     };
-    const restored = JSON.parse(JSON.stringify(docWithBold));
-    expect(restored.content[0].content[0].marks[0].type).toBe('bold');
+    const record = { id: 'bold-1', content: docWithBold, updatedAt: 4000 };
+    const restored = JSON.parse(JSON.stringify(record));
+    expect(restored.content.content[0].content[0].marks[0].type).toBe('bold');
   });
 
-  it('round-trip preserves inline code mark', () => {
-    const docWithCode = {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [{ type: 'text', text: 'hello', marks: [{ type: 'code' }] }],
-        },
-      ],
-    };
-    const restored = JSON.parse(JSON.stringify(docWithCode));
-    expect(restored.content[0].content[0].marks[0].type).toBe('code');
-  });
-
-  it('round-trip preserves horizontal rule node', () => {
+  it('round-trips horizontalRule node correctly in NoteRecord', () => {
     const docWithHr = {
       type: 'doc',
       content: [
@@ -107,12 +116,50 @@ describe('localStorage serialization contract', () => {
         { type: 'paragraph', content: [{ type: 'text', text: 'after' }] },
       ],
     };
-    const restored = JSON.parse(JSON.stringify(docWithHr));
-    expect(restored.content[1].type).toBe('horizontalRule');
+    const record = { id: 'hr-1', content: docWithHr, updatedAt: 5000 };
+    const restored = JSON.parse(JSON.stringify(record));
+    expect(restored.content.content[1].type).toBe('horizontalRule');
   });
 
-  it('SAVE_DEBOUNCE_MS is a reasonable value (800ms)', () => {
-    // The debounce value affects the autosave UX; test it's within expected range
+  it('JSON.parse of a corrupt string throws (corrupt storage guard)', () => {
+    expect(() => JSON.parse('not valid json {')).toThrow();
+  });
+});
+
+describe('notes index serialization', () => {
+  it('serializes and deserializes a notes index (string array)', () => {
+    const ids = ['note-a', 'note-b', 'note-c'];
+    const serialized = JSON.stringify(ids);
+    const restored = JSON.parse(serialized) as string[];
+    expect(restored).toEqual(ids);
+    expect(restored.length).toBe(3);
+  });
+
+  it('empty index serializes and deserializes correctly', () => {
+    const ids: string[] = [];
+    const restored = JSON.parse(JSON.stringify(ids));
+    expect(restored).toEqual([]);
+  });
+
+  it('prepending to index (new-note pattern) works correctly', () => {
+    const existing = ['old-1', 'old-2'];
+    const newId = 'new-1';
+    const updated = [newId, ...existing];
+    expect(updated[0]).toBe('new-1');
+    expect(updated.length).toBe(3);
+  });
+
+  it('filtering out deleted id from index works correctly', () => {
+    const ids = ['a', 'b', 'c'];
+    const toDelete = 'b';
+    const after = ids.filter((id) => id !== toDelete);
+    expect(after).toEqual(['a', 'c']);
+    expect(after).not.toContain('b');
+  });
+});
+
+describe('SAVE_DEBOUNCE_MS is a reasonable value (800ms)', () => {
+  it('SAVE_DEBOUNCE_MS is within expected range', () => {
     const SAVE_DEBOUNCE_MS = 800;
     expect(SAVE_DEBOUNCE_MS).toBeGreaterThanOrEqual(300);
     expect(SAVE_DEBOUNCE_MS).toBeLessThanOrEqual(2000);

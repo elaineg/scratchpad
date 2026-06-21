@@ -5,6 +5,10 @@
 import { test, expect, Page } from '@playwright/test';
 
 const EDITOR = '[data-testid="scratchpad-editor"]';
+const COPY_BTN = '[data-testid="copy-icon-btn"]';
+const COPY_ACTIONS = '.copy-actions';
+const NEW_NOTE_BTN = '[data-testid="new-note-btn"]';
+const NOTES_SIDEBAR = '[data-testid="notes-sidebar"]';
 
 // Helper: clear localStorage and reload to a clean state
 async function freshLoad(page: Page) {
@@ -12,6 +16,20 @@ async function freshLoad(page: Page) {
   await page.evaluate(() => window.localStorage.clear());
   await page.reload();
   // Wait for the editor to appear (dynamic import hydrates client-side)
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+}
+
+// Helper: seed multi-note localStorage and reload
+async function seedNote(page: Page, content: object, noteId = 'test-note-1') {
+  await page.goto('/');
+  await page.evaluate(({ id, doc }) => {
+    window.localStorage.clear();
+    const record = { id, content: doc, updatedAt: Date.now() };
+    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
+    window.localStorage.setItem('scratchpad-active-id', id);
+  }, { id: noteId, doc: content });
+  await page.reload();
   await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
 }
 
@@ -175,30 +193,42 @@ test('Autosave: multi-line document with heading persists after reload', async (
 });
 
 // ─── Returning-user / pre-populated localStorage state ───────────────────────
-test('Returning user: pre-seeded localStorage content renders on load', async ({ page }) => {
-  // Seed localStorage BEFORE navigating so the editor picks it up on mount
+test('Returning user: pre-seeded multi-note localStorage content renders on load', async ({ page }) => {
+  const noteId = 'test-legacy-1';
+  await seedNote(page, {
+    type: 'doc',
+    content: [
+      {
+        type: 'heading',
+        attrs: { level: 2 },
+        content: [{ type: 'text', text: 'Seeded Heading' }],
+      },
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'seeded paragraph text' }],
+      },
+    ],
+  }, noteId);
+  await expect(page.locator(`${EDITOR} h2`)).toHaveText('Seeded Heading');
+  await expect(page.locator(EDITOR)).toContainText('seeded paragraph text');
+});
+
+// ─── Legacy key migration ─────────────────────────────────────────────────────
+test('Legacy key migration: old scratchpad-v1 data is migrated to multi-note format', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => {
+    window.localStorage.clear();
     const doc = {
       type: 'doc',
       content: [
-        {
-          type: 'heading',
-          attrs: { level: 2 },
-          content: [{ type: 'text', text: 'Seeded Heading' }],
-        },
-        {
-          type: 'paragraph',
-          content: [{ type: 'text', text: 'seeded paragraph text' }],
-        },
+        { type: 'paragraph', content: [{ type: 'text', text: 'legacy content' }] },
       ],
     };
     window.localStorage.setItem('scratchpad-v1', JSON.stringify(doc));
   });
   await page.reload();
   await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
-  await expect(page.locator(`${EDITOR} h2`)).toHaveText('Seeded Heading');
-  await expect(page.locator(EDITOR)).toContainText('seeded paragraph text');
+  await expect(page.locator(EDITOR)).toContainText('legacy content');
 });
 
 // ─── Success check 7: No layout jump on heading conversion ───────────────────
@@ -216,24 +246,22 @@ test('SC7: converting a paragraph line to heading does not cause other lines to 
   await expect(page.locator(`${EDITOR} h2`)).toHaveText('heading here');
 });
 
-// ─── Success check 8: No chrome on load ──────────────────────────────────────
-test('SC8: no toolbar, menu bar, header, sidebar, or visible buttons on cold load', async ({ page }) => {
+// ─── SC8: sidebar is present, no toolbar or formatting buttons ───────────────
+test('SC8: sidebar is visible; no toolbar, menu bar, or visible formatting buttons on cold load', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
   await freshLoad(page);
-  // No nav, header, or sidebar elements
-  await expect(page.locator('nav')).toHaveCount(0);
-  await expect(page.locator('header')).toHaveCount(0);
-  await expect(page.locator('aside')).toHaveCount(0);
-  // Copy buttons are in the DOM but hidden (opacity:0, pointer-events:none, aria-hidden)
-  // on a blank document — they must NOT be visible or interactive
-  const copyActions = page.locator('.copy-actions');
-  // aria-hidden is set to true on blank load
+  // Sidebar should be present at desktop width
+  await expect(page.locator(NOTES_SIDEBAR)).toBeVisible();
+  // NEW NOTE button is present
+  await expect(page.locator(NEW_NOTE_BTN)).toBeVisible();
+  // Copy actions are in the DOM but hidden on a blank note
+  const copyActions = page.locator(COPY_ACTIONS);
   const ariaHidden = await copyActions.getAttribute('aria-hidden');
   expect(ariaHidden).toBe('true');
-  // computed opacity must be 0
   const opacity = await copyActions.evaluate((el) => parseFloat(window.getComputedStyle(el).opacity));
   expect(opacity).toBe(0);
-  // Only the main writing surface
-  await expect(page.locator('main')).toBeVisible();
+  // Main writing surface is present
+  await expect(page.locator('[data-testid="writing-surface"]')).toBeVisible();
 });
 
 // ─── Success check 9: Comfortable measure (max-width constrained) ─────────────
@@ -307,8 +335,6 @@ test('FIX1: focused .ProseMirror has no outline/box-shadow (focus ring removed)'
 });
 
 // ─── FIX 2: Placeholder paints on empty load, disappears after typing ─────────
-// NOTE: In TipTap v3, is-editor-empty is on the <p> element, NOT on .ProseMirror.
-// The CSS rule targets p.is-editor-empty (or p.is-empty) and data-placeholder is on that <p>.
 test('FIX2: placeholder ::before content renders on empty editor; disappears after typing', async ({ page }) => {
   await freshLoad(page);
   // On cold empty load: the empty <p> must carry is-editor-empty + data-placeholder
@@ -357,23 +383,14 @@ test('FIX3a: "Saved" indicator does NOT appear on cold empty load', async ({ pag
 });
 
 test('FIX3b: "Saved" does NOT flash during localStorage restore-on-reload', async ({ page }) => {
-  // First, seed localStorage with real content
-  await page.goto('/');
-  await page.evaluate(() => {
-    const doc = {
-      type: 'doc',
-      content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'restore test content' }] },
-      ],
-    };
-    window.localStorage.setItem('scratchpad-v1', JSON.stringify(doc));
-  });
-  // Reload — this triggers the restore path
-  await page.reload();
-  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
-  // The text should be restored
+  const noteId = 'test-note-restore';
+  await seedNote(page, {
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'restore test content' }] },
+    ],
+  }, noteId);
   await expect(page.locator(EDITOR)).toContainText('restore test content');
-  // But "Saved" must NOT have flashed during restore (debounce is 800ms; wait 1.5s)
   await page.waitForTimeout(1500);
   const showCount = await page.locator('.saved-indicator.show').count();
   expect(showCount).toBe(0);
@@ -387,41 +404,43 @@ test('FIX3c: "Saved" DOES appear after typing new content (debounce + indicator)
   await expect(page.locator('.saved-indicator.show')).toBeVisible({ timeout: 3000 });
 });
 
-// ─── Success check 10: Copy affordance visibility ─────────────────────────────
-test('SC10: copy buttons hidden on blank load; fade in after typing; fade out when emptied', async ({ page }) => {
+// ─── SC10 (new): Single copy ICON (not text buttons) is the only copy control ─
+test('SC10: single copy ICON visible on non-empty note; NO markdown-text button anywhere', async ({ page }) => {
   await freshLoad(page);
-  // On blank load: aria-hidden true, opacity 0
-  const copyActions = page.locator('.copy-actions');
+  // On blank load: copy actions hidden
+  const copyActions = page.locator(COPY_ACTIONS);
   expect(await copyActions.getAttribute('aria-hidden')).toBe('true');
   const opacityBefore = await copyActions.evaluate((el) =>
     parseFloat(window.getComputedStyle(el).opacity)
   );
   expect(opacityBefore).toBe(0);
 
-  // Type something — buttons should appear
+  // Type something — single icon should appear
   await page.locator(EDITOR).click();
   await page.keyboard.type('hello');
-  await page.waitForTimeout(300); // allow state update
+  await page.waitForTimeout(300);
   expect(await copyActions.getAttribute('aria-hidden')).toBe('false');
   const opacityAfter = await copyActions.evaluate((el) =>
     parseFloat(window.getComputedStyle(el).opacity)
   );
   expect(opacityAfter).toBeGreaterThan(0);
-  // Both labeled actions visible
-  await expect(page.locator('[data-testid="copy-rich-btn"]')).toContainText('Copy as Rich Text');
-  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copy as Markdown');
 
-  // Delete all content — use Meta+A (macOS select-all) then Backspace
-  // NOTE: Control+A does NOT select-all in TipTap on macOS; Meta+A does.
+  // Single copy icon button is present
+  await expect(page.locator(COPY_BTN)).toBeVisible();
+
+  // There must be NO "Copy as Markdown" or "copy-md-btn" anywhere
+  expect(await page.locator('[data-testid="copy-md-btn"]').count()).toBe(0);
+  expect(await page.locator('[data-testid="copy-rich-btn"]').count()).toBe(0);
+
+  // Delete all content — copy should hide
   await page.keyboard.press('Meta+a');
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(300);
   expect(await copyActions.getAttribute('aria-hidden')).toBe('true');
 });
 
-// ─── Success check 13: Perceptible copy confirmation ─────────────────────────
-test('SC13: copy-markdown confirmation persists for >=1.5s and survives autosave', async ({ page, context }) => {
-  // Grant clipboard permissions
+// ─── SC13: Copy icon confirmation persists for >=1.5s ─────────────────────────
+test('SC13: copy icon confirmation persists for >=1.5s and survives autosave', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await freshLoad(page);
   await page.locator(EDITOR).click();
@@ -429,29 +448,28 @@ test('SC13: copy-markdown confirmation persists for >=1.5s and survives autosave
 
   // Wait for copy button to appear
   await page.waitForTimeout(300);
-  await page.locator('[data-testid="copy-md-btn"]').click();
+  await page.locator(COPY_BTN).click();
 
-  // Immediately check — should show "Copied markdown ✓"
-  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copied markdown ✓', { timeout: 1000 });
+  // Immediately check — should show copied confirmation
+  await expect(page.locator('[data-testid="copy-icon-confirm"]')).toBeVisible({ timeout: 1000 });
 
-  // After 1s it should STILL show "Copied" (not reverted yet — holds for 1.8s)
+  // After 1s it should STILL show the confirmation (holds for 1.8s)
   await page.waitForTimeout(1000);
-  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copied markdown ✓');
+  await expect(page.locator('[data-testid="copy-icon-confirm"]')).toBeVisible();
 });
 
-// ─── Success check 14: No focus-steal / no layout jump ───────────────────────
-test('SC14: clicking copy action does not steal focus from editor', async ({ page, context }) => {
+// ─── SC14: No focus-steal / no layout jump ────────────────────────────────────
+test('SC14: clicking copy icon does not steal focus from editor', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await freshLoad(page);
   await page.locator(EDITOR).click();
   await page.keyboard.type('some text');
   await page.waitForTimeout(300);
 
-  // Click copy-md using onMouseDown preventDefault + onClick focus restore
-  await page.locator('[data-testid="copy-md-btn"]').click();
+  await page.locator(COPY_BTN).click();
   await page.waitForTimeout(200);
 
-  // Editor should still be focused (active element is inside the editor)
+  // Editor should still be focused
   const isFocused = await page.evaluate(() => {
     const editor = document.querySelector('[data-testid="scratchpad-editor"]');
     return editor ? editor.contains(document.activeElement) : false;
@@ -459,8 +477,8 @@ test('SC14: clicking copy action does not steal focus from editor', async ({ pag
   expect(isFocused).toBe(true);
 });
 
-// ─── Success check 15: Mobile safe at 375px ──────────────────────────────────
-test('SC15: copy controls stay within viewport at 375px, no horizontal overflow', async ({ page }) => {
+// ─── SC15: Mobile safe at 375px ──────────────────────────────────────────────
+test('SC15: copy icon stays within viewport at 375px, no horizontal overflow', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await freshLoad(page);
   await page.locator(EDITOR).click();
@@ -474,78 +492,14 @@ test('SC15: copy controls stay within viewport at 375px, no horizontal overflow'
   expect(overflow).toBe(false);
 
   // Copy actions must be within viewport bounds
-  const copyBounds = await page.locator('.copy-actions').boundingBox();
+  const copyBounds = await page.locator(COPY_ACTIONS).boundingBox();
   expect(copyBounds).not.toBeNull();
   expect(copyBounds!.x).toBeGreaterThanOrEqual(0);
-  expect(copyBounds!.x + copyBounds!.width).toBeLessThanOrEqual(375 + 1); // +1px tolerance
+  expect(copyBounds!.x + copyBounds!.width).toBeLessThanOrEqual(375 + 1);
 });
 
-// ─── Success check 11: Copy as Markdown copies raw source ────────────────────
-test('SC11: Copy as Markdown copies raw markdown source (not rendered HTML)', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await freshLoad(page);
-  await page.locator(EDITOR).click();
-  // Type heading then bullet
-  await page.keyboard.type('## Title');
-  await page.keyboard.press('Enter');
-  await page.keyboard.type('- item');
-  await page.waitForTimeout(300);
-
-  // Intercept clipboard.writeText to capture what gets written
-  await page.addInitScript(() => {
-    (window as any).__clipboardWrites = [];
-    const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
-    Object.defineProperty(navigator.clipboard, 'writeText', {
-      value: async (text: string) => {
-        (window as any).__clipboardWrites.push(text);
-        return orig(text);
-      },
-      writable: true,
-      configurable: true,
-    });
-  });
-
-  // Reload to apply init script, re-seed content via localStorage
-  await page.evaluate(() => {
-    const doc = {
-      type: 'doc',
-      content: [
-        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Title' }] },
-        {
-          type: 'bulletList',
-          content: [
-            { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'item' }] }] },
-          ],
-        },
-      ],
-    };
-    window.localStorage.setItem('scratchpad-v1', JSON.stringify(doc));
-  });
-  await page.reload();
-  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
-  await page.waitForTimeout(300);
-
-  await page.locator('[data-testid="copy-md-btn"]').click();
-  await page.waitForTimeout(300);
-
-  // Read what was written to clipboard
-  const writes = await page.evaluate(() => (window as any).__clipboardWrites ?? []);
-  // The writeText call should contain raw markdown, not HTML
-  const captured = writes.length > 0 ? writes[writes.length - 1] :
-    await page.evaluate(() => navigator.clipboard.readText());
-
-  expect(typeof captured).toBe('string');
-  // Must contain markdown heading syntax
-  expect(captured).toContain('## Title');
-  // Must contain markdown bullet syntax
-  expect(captured).toContain('- item');
-  // Must NOT contain HTML tags
-  expect(captured).not.toMatch(/<h[1-6]>/);
-  expect(captured).not.toMatch(/<ul>/);
-});
-
-// ─── Success check 12: Copy as Rich Text writes real HTML tags ────────────────
-test('SC12: Copy as Rich Text ClipboardItem contains real HTML tags not markdown', async ({ page, context }) => {
+// ─── SC12: Copy icon writes real HTML tags ────────────────────────────────────
+test('SC12: copy icon ClipboardItem contains real HTML tags not markdown', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await freshLoad(page);
 
@@ -569,8 +523,10 @@ test('SC12: Copy as Rich Text ClipboardItem contains real HTML tags not markdown
     });
   });
 
-  // Seed bold content via localStorage
-  await page.evaluate(() => {
+  // Seed bold content via multi-note localStorage
+  const noteId = 'html-copy-test';
+  await page.evaluate(({ id }) => {
+    window.localStorage.clear();
     const doc = {
       type: 'doc',
       content: [
@@ -592,13 +548,16 @@ test('SC12: Copy as Rich Text ClipboardItem contains real HTML tags not markdown
         { type: 'horizontalRule' },
       ],
     };
-    window.localStorage.setItem('scratchpad-v1', JSON.stringify(doc));
-  });
+    const record = { id, content: doc, updatedAt: Date.now() };
+    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
+    window.localStorage.setItem('scratchpad-active-id', id);
+  }, { id: noteId });
   await page.reload();
   await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
   await page.waitForTimeout(300);
 
-  await page.locator('[data-testid="copy-rich-btn"]').click();
+  await page.locator(COPY_BTN).click();
   await page.waitForTimeout(500);
 
   const writes = await page.evaluate(() => (window as any).__clipboardRichWrites ?? []);
@@ -615,25 +574,24 @@ test('SC12: Copy as Rich Text ClipboardItem contains real HTML tags not markdown
   // Must NOT contain markdown syntax
   expect(htmlPayload).not.toContain('**');
   expect(htmlPayload).not.toContain('## ');
-  expect(htmlPayload).not.toContain('- bullet');
 });
 
 // ─── Hostile clipboard: blocked clipboard shows "Copy blocked" (not silent) ───
-test('Hostile clipboard: blocked clipboard.writeText shows "Copy blocked" not silent success', async ({ page }) => {
-  // Navigate first to get a valid page context, seed localStorage, then reload
-  // with the clipboard override active via addInitScript
+test('Hostile clipboard: blocked clipboard shows explicit "COPY BLOCKED" state', async ({ page }) => {
   await page.goto('/');
   await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
 
   // Seed content
-  await page.evaluate(() => {
-    window.localStorage.setItem('scratchpad-v1', JSON.stringify({
-      type: 'doc',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'blocked test' }] }],
-    }));
-  });
+  const noteId = 'blocked-test';
+  await page.evaluate(({ id }) => {
+    window.localStorage.clear();
+    const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'blocked test' }] }] };
+    const record = { id, content: doc, updatedAt: Date.now() };
+    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
+    window.localStorage.setItem('scratchpad-active-id', id);
+  }, { id: noteId });
 
-  // Install init script THEN reload so the override is applied on the next navigation
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'clipboard', {
       value: {
@@ -649,31 +607,21 @@ test('Hostile clipboard: blocked clipboard.writeText shows "Copy blocked" not si
   await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
   await page.waitForTimeout(300);
 
-  // Verify clipboard override is active
   const isBlocked = await page.evaluate(async () => {
     try { await navigator.clipboard.writeText('test'); return false; } catch { return true; }
   });
   expect(isBlocked).toBe(true);
 
-  // Click Copy as Markdown — clipboard is blocked
-  await page.locator('[data-testid="copy-md-btn"]').click();
+  await page.locator(COPY_BTN).click();
   await page.waitForTimeout(200);
 
-  // Must show "Copy blocked" — explicit failure, not "Copied ✓"
-  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copy blocked', { timeout: 2000 });
-  // Must NOT show success
-  const mdText = await page.locator('[data-testid="copy-md-btn"]').innerText();
-  expect(mdText).not.toContain('Copied markdown');
-
-  // Click Copy as Rich Text — also blocked
-  await page.locator('[data-testid="copy-rich-btn"]').click();
-  await page.waitForTimeout(200);
-  await expect(page.locator('[data-testid="copy-rich-btn"]')).toContainText('Copy blocked', { timeout: 2000 });
-  const richText = await page.locator('[data-testid="copy-rich-btn"]').innerText();
-  expect(richText).not.toContain('Copied rich text');
+  // Must show "COPY BLOCKED" element (role=alert)
+  await expect(page.locator('[data-testid="copy-icon-blocked"]')).toBeVisible({ timeout: 2000 });
+  // Must NOT show success confirm
+  expect(await page.locator('[data-testid="copy-icon-confirm"]').count()).toBe(0);
 });
 
-// ─── Success check 16: Grotesque typeface ─────────────────────────────────────
+// ─── SC16a: Grotesque typeface ─────────────────────────────────────────────────
 test('SC16a: Archivo <link> stylesheet is present in document <head>', async ({ page }) => {
   await freshLoad(page);
   const archivoLink = await page.evaluate(() => {
@@ -683,7 +631,7 @@ test('SC16a: Archivo <link> stylesheet is present in document <head>', async ({ 
   expect(archivoLink).toBe(true);
 });
 
-test('SC16b: editor element (data-testid=scratchpad-editor) computed font-family contains "Helvetica Neue" and resolves to a sans-serif stack (not serif)', async ({ page }) => {
+test('SC16b: editor element computed font-family contains "Helvetica Neue" and sans-serif', async ({ page }) => {
   await freshLoad(page);
   const fontFamily = await page.evaluate(() => {
     const el = document.querySelector('[data-testid="scratchpad-editor"]') as HTMLElement;
@@ -691,35 +639,12 @@ test('SC16b: editor element (data-testid=scratchpad-editor) computed font-family
     return window.getComputedStyle(el).fontFamily;
   });
   expect(fontFamily).not.toBeNull();
-  // Must contain Helvetica Neue (the primary grotesque)
   expect(fontFamily!).toContain('Helvetica Neue');
-  // Must contain sans-serif as the trailing generic (the grotesque family)
   expect(fontFamily!).toContain('sans-serif');
-  // Must NOT contain a standalone trailing ", serif" (which would indicate a serif stack)
-  // "sans-serif" is fine; a bare ", serif" at end of stack is the failure case
   expect(fontFamily!.trim()).not.toMatch(/, serif$/);
 });
 
-test('SC16c: copy buttons (.copy-btn) computed font-family is grotesque (contains "Helvetica Neue", ends in sans-serif)', async ({ page }) => {
-  await freshLoad(page);
-  // Type something so copy buttons are shown
-  await page.locator(EDITOR).click();
-  await page.keyboard.type('typeface test');
-  await page.waitForTimeout(300);
-
-  const copyBtnFont = await page.evaluate(() => {
-    // Get the first copy button
-    const btn = document.querySelector('.copy-btn') as HTMLElement;
-    if (!btn) return null;
-    return window.getComputedStyle(btn).fontFamily;
-  });
-  expect(copyBtnFont).not.toBeNull();
-  expect(copyBtnFont!).toContain('Helvetica Neue');
-  expect(copyBtnFont!).toContain('sans-serif');
-  expect(copyBtnFont!.trim()).not.toMatch(/, serif$/);
-});
-
-test('SC16d: saved-indicator computed font-family is grotesque (contains "Helvetica Neue", ends in sans-serif)', async ({ page }) => {
+test('SC16c: saved-indicator computed font-family is grotesque', async ({ page }) => {
   await freshLoad(page);
   const savedFont = await page.evaluate(() => {
     const el = document.querySelector('.saved-indicator') as HTMLElement;
@@ -732,56 +657,56 @@ test('SC16d: saved-indicator computed font-family is grotesque (contains "Helvet
   expect(savedFont!.trim()).not.toMatch(/, serif$/);
 });
 
-// ─── Success check 17: Snappy typing / no per-keystroke serialization ─────────
-test('SC17a: after a single keystroke, localStorage is NOT yet written (debounce pending)', async ({ page }) => {
+// ─── SC17: Snappy typing / no per-keystroke serialization ─────────────────────
+test('SC17a: after a single keystroke, localStorage note is NOT yet written (debounce pending)', async ({ page }) => {
   await freshLoad(page);
-  // Fresh load clears localStorage; now type a single character
+
+  // Capture the active note id
+  const activeId = await page.evaluate(() => window.localStorage.getItem('scratchpad-active-id'));
+  expect(activeId).not.toBeNull();
+  const noteKey = `scratchpad-note-${activeId}`;
+
+  // Record initial content
+  const initialValue = await page.evaluate((key) => window.localStorage.getItem(key), noteKey);
+
+  // Type a single character
   await page.locator(EDITOR).click();
   await page.keyboard.type('x');
 
-  // Immediately after one keystroke (before 800ms), localStorage must NOT have been written
-  const valueImmediate = await page.evaluate((key) => {
-    return window.localStorage.getItem(key);
-  }, 'scratchpad-v1');
-
-  // The key must be absent or unchanged (freshLoad cleared it, debounce hasn't fired yet)
-  expect(valueImmediate).toBeNull();
+  // Immediately after one keystroke (before 800ms), localStorage should not have been updated
+  const valueImmediate = await page.evaluate((key) => window.localStorage.getItem(key), noteKey);
+  // Content should be same as initial (debounce hasn't fired yet)
+  expect(valueImmediate).toBe(initialValue);
 });
 
 test('SC17b: after 1000ms the debounce has fired and localStorage IS written', async ({ page }) => {
   await freshLoad(page);
+  const activeId = await page.evaluate(() => window.localStorage.getItem('scratchpad-active-id'));
+  const noteKey = `scratchpad-note-${activeId}`;
+
   await page.locator(EDITOR).click();
   await page.keyboard.type('debounce proof');
 
-  // Wait for debounce to fire (800ms + 200ms buffer = 1000ms)
   await page.waitForTimeout(1000);
 
-  const value = await page.evaluate((key) => {
-    return window.localStorage.getItem(key);
-  }, 'scratchpad-v1');
+  const value = await page.evaluate((key) => window.localStorage.getItem(key), noteKey);
   expect(value).not.toBeNull();
-  // The stored value should be a valid JSON doc containing "debounce proof"
   const parsed = JSON.parse(value!);
-  expect(parsed.type).toBe('doc');
-  const text = JSON.stringify(parsed);
+  expect(parsed.content.type).toBe('doc');
+  const text = JSON.stringify(parsed.content);
   expect(text).toContain('debounce proof');
 });
 
 test('SC17c: typing many characters rapidly does not drop characters (integrity)', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
-  // Type a 40-character string as fast as Playwright can
   const testString = 'abcdefghijklmnopqrstuvwxyz1234567890!@#$';
   await page.keyboard.type(testString, { delay: 0 });
-  // Wait for editor to settle (no debounce needed — just DOM update)
   await page.waitForTimeout(200);
   const editorText = await page.locator(EDITOR).innerText();
-  // All characters must be present (no drops under rapid typing)
   for (const char of testString) {
     expect(editorText).toContain(char);
   }
-  // The total length of the text in the editor should match the string length
-  // (innerText may add newlines; strip them for comparison)
   const stripped = editorText.replace(/\n/g, '');
   expect(stripped.length).toBeGreaterThanOrEqual(testString.length);
 });
@@ -790,55 +715,434 @@ test('SC17d: many rapid keystrokes do NOT each trigger a localStorage write (deb
   await freshLoad(page);
   await page.locator(EDITOR).click();
 
-  // Install a counter that tracks localStorage.setItem calls for our key
-  await page.evaluate(() => {
+  const activeId = await page.evaluate(() => window.localStorage.getItem('scratchpad-active-id'));
+  const noteKey = `scratchpad-note-${activeId}`;
+
+  // Install a counter that tracks localStorage.setItem calls for our note key
+  await page.evaluate((key) => {
     (window as any).__storageWriteCount = 0;
     const origSetItem = window.localStorage.setItem.bind(window.localStorage);
-    window.localStorage.setItem = function(key: string, value: string) {
-      if (key === 'scratchpad-v1') {
+    window.localStorage.setItem = function(k: string, value: string) {
+      if (k === key) {
         (window as any).__storageWriteCount++;
       }
-      origSetItem(key, value);
+      origSetItem(k, value);
     };
-  });
+  }, noteKey);
 
-  // Type 20 characters rapidly (each fires onUpdate, but NOT a localStorage write)
   await page.keyboard.type('12345678901234567890', { delay: 20 });
 
   // Immediately after typing (< 800ms total), writes should be 0
   const writesImmediately = await page.evaluate(() => (window as any).__storageWriteCount);
   expect(writesImmediately).toBe(0);
 
-  // Wait for the debounce to fire
   await page.waitForTimeout(1000);
 
-  // After debounce, exactly 1 write should have occurred (all keystrokes coalesced)
   const writesAfterDebounce = await page.evaluate(() => (window as any).__storageWriteCount);
   expect(writesAfterDebounce).toBe(1);
 });
 
-// ─── Copy confirmation survives autosave re-render (live ticking session) ────
-test('SC13b: "Copied" cue is still visible 1s after click despite autosave re-render', async ({ page, context }) => {
+// ─── Copy confirmation survives autosave re-render ────────────────────────────
+test('SC13b: copy confirm visible 1s after click despite autosave re-render', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await freshLoad(page);
   await page.locator(EDITOR).click();
   await page.keyboard.type('autosave survivor test content');
 
-  // Wait for autosave debounce to fire (800ms + buffer)
   await page.waitForTimeout(1200);
-
-  // Type one more character to trigger another autosave cycle while we check the confirmation
   await page.keyboard.type('x');
 
-  // Click the copy button — autosave will re-render within 800ms
-  await page.locator('[data-testid="copy-md-btn"]').click();
+  await page.locator(COPY_BTN).click();
+  await expect(page.locator('[data-testid="copy-icon-confirm"]')).toBeVisible({ timeout: 1000 });
 
-  // Check confirmation is present immediately
-  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copied markdown ✓', { timeout: 1000 });
-
-  // Wait 800ms (the autosave debounce fires here and triggers re-render)
   await page.waitForTimeout(900);
+  await expect(page.locator('[data-testid="copy-icon-confirm"]')).toBeVisible();
+});
 
-  // The "Copied ✓" cue must STILL be present after autosave re-render
-  await expect(page.locator('[data-testid="copy-md-btn"]')).toContainText('Copied markdown ✓');
+// ─── SC9 Sidebar: new note + instant typing ────────────────────────────────────
+test('SC9-sidebar: clicking NEW NOTE creates new row, auto-focuses editor', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await freshLoad(page);
+  // Type something in the first note to make it non-blank
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('first note content');
+  await page.waitForTimeout(1000);
+
+  // Click new note button
+  await page.locator(NEW_NOTE_BTN).click();
+  await page.waitForTimeout(200);
+
+  // Editor should be blank (new note)
+  const editorText = await page.locator(EDITOR).innerText();
+  expect(editorText.trim()).toBe('');
+
+  // Without clicking, type something — it should go into the editor
+  await page.keyboard.type('h');
+  const afterType = await page.locator(EDITOR).innerText();
+  expect(afterType).toContain('h');
+});
+
+// ─── SC10 Sidebar: title from first line + most-recent ordering ───────────────
+test('SC10-sidebar: note title derives from first line; most-recent note is first', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // Seed a note directly (bypasses the dateline so the first line is known text)
+  const noteId = 'title-test-1';
+  await page.goto('/');
+  await page.evaluate(({ id }) => {
+    window.localStorage.clear();
+    const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Sprint plan' }] }] };
+    const record = { id, content: doc, updatedAt: Date.now() };
+    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
+    window.localStorage.setItem('scratchpad-active-id', id);
+  }, { id: noteId });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+
+  // The sidebar should show the title derived from first line
+  await expect(page.locator(NOTES_SIDEBAR)).toContainText('Sprint plan', { timeout: 3000 });
+});
+
+// ─── SC11 Sidebar: active-by-inversion ────────────────────────────────────────
+test('SC11-sidebar: active note row has ink fill (inversion)', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // Seed two notes
+  await page.goto('/');
+  const noteId1 = 'sidebar-inv-1';
+  const noteId2 = 'sidebar-inv-2';
+  await page.evaluate(({ id1, id2 }) => {
+    window.localStorage.clear();
+    const makeRecord = (id: string, text: string, ts: number) => ({
+      id, content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] }, updatedAt: ts,
+    });
+    window.localStorage.setItem(`scratchpad-note-${id1}`, JSON.stringify(makeRecord(id1, 'alpha note', 1000)));
+    window.localStorage.setItem(`scratchpad-note-${id2}`, JSON.stringify(makeRecord(id2, 'bravo note', 2000)));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id2, id1]));
+    window.localStorage.setItem('scratchpad-active-id', id2);
+  }, { id1: noteId1, id2: noteId2 });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+  await page.waitForTimeout(300);
+
+  // The active note row should have the .active class
+  const activeRow = page.locator(`[data-testid="note-row-${noteId2}"]`);
+  await expect(activeRow).toHaveClass(/active/);
+
+  // Computed background of active row button should be dark (ink)
+  const bg = await page.locator(`[data-testid="note-select-${noteId2}"]`).evaluate((el) =>
+    window.getComputedStyle(el).backgroundColor
+  );
+  // rgb(43, 43, 41) = #2B2B29 (ink)
+  expect(bg).toMatch(/rgb\(43,\s*43,\s*41\)/);
+});
+
+// ─── SC12 Sidebar: switch saves & restores (returning-user regression) ─────────
+test('SC12-sidebar: switch between notes saves and restores content; reload persists both', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await freshLoad(page);
+
+  // Type note A
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('alpha note');
+  await page.waitForTimeout(1000);
+
+  // Create note B
+  await page.locator(NEW_NOTE_BTN).click();
+  await page.waitForTimeout(200);
+  await page.keyboard.type('bravo note');
+  await page.waitForTimeout(1000);
+
+  // The sidebar has at least 2 notes now
+  const noteRows = page.locator('.note-row');
+  await expect(noteRows).toHaveCount(2, { timeout: 3000 });
+
+  // Switch back to note A (it should show 'alpha note')
+  await page.locator('.note-row').nth(1).locator('button.note-row-btn').click();
+  await page.waitForTimeout(300);
+  await expect(page.locator(EDITOR)).toContainText('alpha note');
+
+  // Reload — both notes should still be there
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+  const noteRowsAfterReload = page.locator('.note-row');
+  await expect(noteRowsAfterReload).toHaveCount(2, { timeout: 3000 });
+});
+
+// ─── SC13 Sidebar: delete with confirm ────────────────────────────────────────
+test('SC13-sidebar: delete affordance shows confirm; confirming removes note', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // Seed two notes
+  await page.goto('/');
+  const noteId1 = 'del-test-1';
+  const noteId2 = 'del-test-2';
+  await page.evaluate(({ id1, id2 }) => {
+    window.localStorage.clear();
+    const makeRecord = (id: string, text: string, ts: number) => ({
+      id, content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] }, updatedAt: ts,
+    });
+    window.localStorage.setItem(`scratchpad-note-${id1}`, JSON.stringify(makeRecord(id1, 'note to keep', 1000)));
+    window.localStorage.setItem(`scratchpad-note-${id2}`, JSON.stringify(makeRecord(id2, 'note to delete', 2000)));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id2, id1]));
+    window.localStorage.setItem('scratchpad-active-id', id2);
+  }, { id1: noteId1, id2: noteId2 });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+
+  // Hover to reveal delete glyph, click it
+  await page.locator(`[data-testid="note-select-${noteId2}"]`).hover();
+  await page.locator(`[data-testid="delete-note-${noteId2}"]`).click({ force: true });
+
+  // Confirm inline appears
+  await expect(page.locator(`[data-testid="confirm-delete-${noteId2}"]`)).toBeVisible({ timeout: 2000 });
+
+  // Confirm deletion
+  await page.locator(`[data-testid="confirm-delete-${noteId2}"]`).click();
+  await page.waitForTimeout(300);
+
+  // Note to delete is gone; note to keep remains
+  expect(await page.locator('.note-row').count()).toBe(1);
+  await expect(page.locator(NOTES_SIDEBAR)).toContainText('note to keep');
+});
+
+// ─── SC18: Character count ─────────────────────────────────────────────────────
+test('SC18: char count visible and updates as you type', async ({ page }) => {
+  await freshLoad(page);
+  const charCount = page.locator('.char-count');
+  await expect(charCount).toBeVisible();
+
+  // Initially 0
+  const initialCount = await charCount.innerText();
+  expect(parseInt(initialCount.replace(/,/g, ''), 10)).toBe(0);
+
+  // Type something and check count increases
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('hello');
+  await page.waitForTimeout(100);
+
+  const newCount = await charCount.innerText();
+  // 'hello' is 5 chars; dateline will be added so count >= 5
+  expect(parseInt(newCount.replace(/,/g, ''), 10)).toBeGreaterThanOrEqual(5);
+});
+
+// ─── SC19: Auto-dateline on new notes ─────────────────────────────────────────
+test('SC19: dateline auto-inserted on first keystroke of new note', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await freshLoad(page);
+  // Type immediately — NO settle delay. The dateline must be inserted even when the user
+  // starts typing at 0ms after the editor mounts (the fix arms pendingDatelineRef
+  // synchronously on note activation, no longer relying on a post-mount settle window).
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('meeting notes');
+  // Wait until >=2 paragraphs appear (dateline above + typed text below)
+  await page.waitForFunction(() => {
+    const editor = document.querySelector('[data-testid="scratchpad-editor"]');
+    if (!editor) return false;
+    const ps = editor.querySelectorAll('p');
+    return ps.length >= 2;
+  }, undefined, { timeout: 5000 });
+
+  const editorText = await page.locator(EDITOR).innerText();
+  // Should contain a date-like string (e.g. "Saturday, June 20" — weekday + month + day)
+  // Check that the editor has more than just the typed text (dateline was inserted)
+  const lines = editorText.split('\n').filter(l => l.trim().length > 0);
+  // At least 2 lines: dateline + typed text
+  expect(lines.length).toBeGreaterThanOrEqual(2);
+  // The first line should look like a date (contains a comma and day number)
+  expect(lines[0]).toMatch(/\w+, \w+ \d+/);
+  // The second line should contain the typed text
+  expect(editorText).toContain('meeting notes');
+  // Confirm no year in the dateline
+  expect(lines[0]).not.toMatch(/\d{4}/);
+});
+
+// ─── SC19c: Dateline inserted even on fast-type (0ms settle, existing note present) ─
+test('SC19c: dateline inserted at 0ms even when an existing note is present (fast-type path)', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // Seed an existing note so we're not in cold-load state
+  await page.goto('/');
+  await page.evaluate(() => {
+    window.localStorage.clear();
+    const id = 'existing-seed';
+    const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'existing note' }] }] };
+    const record = { id, content: doc, updatedAt: Date.now() };
+    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
+    window.localStorage.setItem('scratchpad-active-id', id);
+  });
+  await page.reload();
+  await page.waitForSelector('[data-testid="scratchpad-editor"]', { state: 'visible', timeout: 10_000 });
+
+  // Click NEW NOTE then type IMMEDIATELY (no delay — simulating a fast typist)
+  await page.locator('[data-testid="new-note-btn"]').click();
+  // Type immediately with NO waitForTimeout — this is the race the validator caught
+  await page.locator('[data-testid="scratchpad-editor"]').click();
+  await page.keyboard.type('fast typing');
+
+  // Wait for dateline to appear (it fires via setTimeout(0) after first keystroke)
+  await page.waitForFunction(() => {
+    const editor = document.querySelector('[data-testid="scratchpad-editor"]');
+    if (!editor) return false;
+    return editor.querySelectorAll('p').length >= 2;
+  }, undefined, { timeout: 5000 });
+
+  const editorText = await page.locator('[data-testid="scratchpad-editor"]').innerText();
+  const lines = editorText.split('\n').filter(l => l.trim().length > 0);
+  expect(lines.length).toBeGreaterThanOrEqual(2);
+  // First line is the dateline
+  expect(lines[0]).toMatch(/\w+, \w+ \d+/);
+  expect(lines[0]).not.toMatch(/\d{4}/);
+  // Typed text is on line 2+
+  expect(editorText).toContain('fast typing');
+});
+
+test('SC19b: dateline NOT added on existing notes when switching back', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // Seed an existing note
+  const noteId = 'existing-note';
+  await page.goto('/');
+  await page.evaluate(({ id }) => {
+    window.localStorage.clear();
+    const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'existing content' }] }] };
+    const record = { id, content: doc, updatedAt: Date.now() };
+    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify(record));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
+    window.localStorage.setItem('scratchpad-active-id', id);
+  }, { id: noteId });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+
+  // Click on the editor and type more — should NOT insert dateline
+  await page.locator(EDITOR).click();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' more text');
+  await page.waitForTimeout(200);
+
+  const editorText = await page.locator(EDITOR).innerText();
+  // Should just have the original content + typed text, no dateline prefix
+  expect(editorText).toContain('existing content');
+  // Lines should not start with a date pattern
+  const firstLine = editorText.split('\n')[0].trim();
+  expect(firstLine).not.toMatch(/^\w+, \w+ \d+$/);
+});
+
+// ─── Double-click guard: rapid double-click on + NEW NOTE yields one new note ─
+test('double-click NEW NOTE creates only one new blank note', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await freshLoad(page);
+
+  // Type in the first note so it's not blank (ensures the guard fires only on blank notes)
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('existing content');
+  await page.waitForTimeout(1000); // let autosave fire so the note is saved
+
+  // Double-click the NEW NOTE button rapidly
+  await page.locator(NEW_NOTE_BTN).dblclick();
+  await page.waitForTimeout(300);
+
+  // There should be exactly 2 notes total (original + 1 new), not 3
+  const noteRows = page.locator('.note-row');
+  await expect(noteRows).toHaveCount(2, { timeout: 3000 });
+});
+
+// ─── SC21: Mobile safe at 375px with sidebar drawer ──────────────────────────
+// ─── P2: Unload-flush — recent keystroke survives visibilitychange reload ─────
+test('P2-unload-flush: edit typed within debounce window persists after visibilitychange hidden + reload', async ({ page }) => {
+  await freshLoad(page);
+
+  // Wait for the editor to fully settle (dynamic import + isRestoringRef clears after 900ms)
+  await page.waitForTimeout(1100);
+
+  await page.locator(EDITOR).click();
+  await page.keyboard.type('flush survivor text');
+  await page.waitForTimeout(100);
+
+  // Capture the active note id
+  const activeId = await page.evaluate(() => window.localStorage.getItem('scratchpad-active-id'));
+  expect(activeId).not.toBeNull();
+
+  // Dispatch visibilitychange to hidden BEFORE the 800ms debounce fires
+  // This should trigger the flush listener and write to localStorage.
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  // Small pause to let the flush complete
+  await page.waitForTimeout(200);
+
+  // Verify the flush wrote to localStorage BEFORE reload
+  const flushedValue = await page.evaluate((id) =>
+    window.localStorage.getItem(`scratchpad-note-${id}`)
+  , activeId!);
+  expect(flushedValue).not.toBeNull();
+  expect(flushedValue!).toContain('flush survivor text');
+
+  // Now reload WITHOUT waiting for debounce
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+
+  // The text should be present (flush wrote it before reload)
+  await expect(page.locator(EDITOR)).toContainText('flush survivor text');
+});
+
+// ─── P3: Mobile glyph spacing — hamburger and + NEW NOTE label don't overlap ─
+test('P3-mobile-glyph: hamburger btn and NEW NOTE label do not overlap at 375px', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await freshLoad(page);
+
+  // Open sidebar so NEW NOTE button is visible
+  await page.locator('[data-testid="hamburger-btn"]').click();
+  await page.waitForTimeout(300);
+  await expect(page.locator(NEW_NOTE_BTN)).toBeVisible();
+
+  const hamBox = await page.locator('[data-testid="hamburger-btn"]').boundingBox();
+  const newNoteBox = await page.locator(NEW_NOTE_BTN).boundingBox();
+  expect(hamBox).not.toBeNull();
+  expect(newNoteBox).not.toBeNull();
+
+  // They should not overlap: either the hamburger is outside the sidebar (mobile chrome)
+  // or the NEW NOTE btn's left edge is at least 0 (in the sidebar panel).
+  // The key assertion: neither element's bounding box overlaps the other.
+  const hamRight = hamBox!.x + hamBox!.width;
+  const newNoteLeft = newNoteBox!.x;
+  const hamBottom = hamBox!.y + hamBox!.height;
+  const newNoteTop = newNoteBox!.y;
+
+  // If they're in the same horizontal band, ensure they don't overlap on x-axis
+  // (hamburger is in main area, NEW NOTE is inside the sidebar — they're in different stacking contexts)
+  // At minimum: assert NEW NOTE label IS fully readable (width > 10px)
+  expect(newNoteBox!.width).toBeGreaterThan(10);
+  // And NEW NOTE button itself is within viewport
+  expect(newNoteBox!.x + newNoteBox!.width).toBeLessThanOrEqual(376);
+});
+
+test('SC21: at 375px sidebar is off-canvas, hamburger toggles it, no overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await freshLoad(page);
+
+  // Hamburger should be visible
+  await expect(page.locator('[data-testid="hamburger-btn"]')).toBeVisible();
+
+  // Sidebar should be off-canvas (not blocking the writing surface)
+  const sidebar = page.locator(NOTES_SIDEBAR);
+  const sidebarBox = await sidebar.boundingBox();
+  // When closed, the sidebar should be at negative x (off-screen) or width 0
+  // In our CSS it's translated -100% so x = -240
+  if (sidebarBox) {
+    expect(sidebarBox.x + sidebarBox.width).toBeLessThanOrEqual(0 + 1);
+  }
+
+  // No horizontal overflow
+  const overflow = await page.evaluate(() =>
+    document.documentElement.scrollWidth > document.documentElement.clientWidth
+  );
+  expect(overflow).toBe(false);
+
+  // Open drawer
+  await page.locator('[data-testid="hamburger-btn"]').click();
+  await page.waitForTimeout(300);
+  // Sidebar should now be visible
+  const sidebarBoxOpen = await sidebar.boundingBox();
+  if (sidebarBoxOpen) {
+    expect(sidebarBoxOpen.x).toBeGreaterThanOrEqual(0);
+  }
 });

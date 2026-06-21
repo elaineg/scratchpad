@@ -4,6 +4,15 @@
   --paper: #FBFAF8;
   --ink: #2B2B29;
   --muted: #A6A39C;
+  --grey-50: #F5F4F2;
+  --grey-200: #D8D5CF;
+  --grey-600: #706D67;
+  --sidebar-width: 240px;
+  --fs-micro: 10px;
+  --fs-label: 11px;
+  --fs-sm: 13px;
+  --ls-label: 0.1em;
+  --ls-micro: 0.08em;
 }
 
 * {
@@ -17,6 +26,285 @@ body {
   background: var(--paper);
   color: var(--ink);
   height: 100%;
+}
+
+/* ─── App Layout ──────────────────────────────────────────────────────────── */
+
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  background: var(--paper);
+  position: relative;
+}
+
+/* ─── Left sidebar ────────────────────────────────────────────────────────── */
+
+.notes-sidebar {
+  width: var(--sidebar-width);
+  min-height: 100vh;
+  background: var(--paper);
+  border-right: 1px solid var(--grey-200);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
+}
+
+/* Mobile: off-canvas drawer */
+@media (max-width: 640px) {
+  .notes-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: var(--sidebar-width);
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+    z-index: 100;
+    overflow-y: auto;
+  }
+
+  .notes-sidebar.open {
+    transform: translateX(0);
+    box-shadow: none;
+    border-right: 1px solid var(--grey-200);
+  }
+}
+
+/* + NEW NOTE button */
+.sidebar-new-note {
+  border-bottom: 1px solid var(--grey-200);
+  padding: 16px 14px 14px;
+}
+
+/* On mobile, the fixed hamburger (18px wide + 4px pad + 14px left = ~36px from left edge)
+   overlaps the "+ NEW NOTE" label. Shift the new-note area right so they don't collide. */
+@media (max-width: 640px) {
+  .sidebar-new-note {
+    padding-left: 44px;
+  }
+}
+
+.new-note-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  color: var(--ink);
+  text-transform: uppercase;
+  line-height: 1.4;
+  display: block;
+  width: 100%;
+  text-align: left;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.new-note-btn:hover,
+.new-note-btn:focus-visible {
+  opacity: 0.7;
+}
+
+/* Notes list */
+.notes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Each note row */
+.note-row {
+  border-bottom: 1px solid var(--grey-200);
+  position: relative;
+}
+
+.note-row-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
+  text-align: left;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  gap: 6px;
+}
+
+.note-row-btn:hover,
+.note-row-btn:focus-visible {
+  background: var(--grey-50);
+}
+
+/* Active row: ink fill, paper text */
+.note-row.active .note-row-btn {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.note-row.active .note-row-btn:hover {
+  background: var(--ink);
+  opacity: 0.92;
+}
+
+.note-title {
+  font-size: var(--fs-sm);
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+/* Delete glyph — hidden at rest, shown on hover */
+.note-delete-glyph {
+  font-size: 16px;
+  color: var(--grey-600);
+  flex-shrink: 0;
+  opacity: 0;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 2px;
+  transition: opacity 100ms ease, color 100ms ease;
+  user-select: none;
+}
+
+.note-row-btn:hover .note-delete-glyph,
+.note-row-btn:focus-within .note-delete-glyph {
+  opacity: 1;
+}
+
+.note-row.active .note-delete-glyph {
+  color: var(--paper);
+  opacity: 0;
+}
+
+.note-row.active .note-row-btn:hover .note-delete-glyph {
+  color: var(--paper);
+  opacity: 0.7;
+}
+
+.note-delete-glyph:hover {
+  color: var(--ink) !important;
+  opacity: 1 !important;
+}
+
+/* Delete confirm inline */
+.note-delete-confirm {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.delete-confirm-label {
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-micro);
+  text-transform: uppercase;
+  color: var(--ink);
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
+}
+
+.delete-confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.delete-confirm-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-micro);
+  text-transform: uppercase;
+  outline: none;
+}
+
+.delete-confirm-btn.confirm {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.delete-confirm-btn.cancel {
+  color: var(--grey-600);
+}
+
+.delete-confirm-btn:hover {
+  opacity: 0.7;
+}
+
+/* Mobile overlay behind drawer */
+.sidebar-overlay {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .notes-sidebar.open + * + .writing-surface::before,
+  .sidebar-overlay {
+    display: none;
+  }
+}
+
+/* ─── Mobile hamburger button ─────────────────────────────────────────────── */
+
+.hamburger-btn {
+  display: none;
+  position: fixed;
+  top: 16px;
+  left: 14px;
+  z-index: 200;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--ink);
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 640px) {
+  .hamburger-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* ─── Writing surface ─────────────────────────────────────────────────────── */
+
+.writing-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 100vh;
+  padding: 12vh 1.5rem 6rem;
+  position: relative;
+  background: var(--paper);
+}
+
+@media (max-width: 640px) {
+  .writing-surface {
+    padding: 10vh 1.25rem 5rem;
+  }
+}
+
+.writing-column {
+  max-width: 68ch;
+  margin: 0 auto;
+  position: relative;
 }
 
 /* ─── TipTap / ProseMirror: kill focus ring ─── */
@@ -153,65 +441,94 @@ body {
   font-style: italic;
 }
 
-/* ─── Copy affordance — fixed top-right corner, outside writing column ─── */
+/* ─── Single copy icon — fixed top-right corner ─── */
 
 .copy-actions {
   position: fixed;
   top: 20px;
   right: 24px;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
+  align-items: center;
   /* Opacity transition only — NO layout shift, NO slide */
   transition: opacity 250ms ease;
   z-index: 10;
 }
 
-.copy-btn {
+.copy-icon-btn {
   background: none;
   border: none;
-  padding: 0;
+  padding: 4px;
   cursor: pointer;
-  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  line-height: 1.5;
-  text-align: right;
-  /* Smooth label transition */
-  transition: color 150ms ease;
-  /* Prevent button from stealing focus ring or shifting editor */
+  color: var(--grey-600);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   outline: none;
   -webkit-tap-highlight-color: transparent;
-  white-space: nowrap;
+  transition: color 150ms ease;
 }
 
-.copy-btn:hover,
-.copy-btn:focus-visible {
+.copy-icon-btn:hover,
+.copy-icon-btn:focus-visible {
   color: var(--ink);
 }
 
-.copy-btn.confirm {
-  color: #3d7a5a; /* calm confirm-green */
+/* Confirm state: checkmark + COPIED label */
+.copy-confirm {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink);
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
 }
 
-.copy-btn.warn {
-  color: #8a7040; /* muted warning amber-brown */
+.copy-blocked {
+  display: flex;
+  align-items: center;
+  color: var(--grey-600);
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
 }
 
-/* Mobile (≤375px): shrink text slightly, stack right-aligned */
-@media (max-width: 430px) {
+.copy-label {
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
   .copy-actions {
-    top: 12px;
-    right: 12px;
-  }
-  .copy-btn {
-    font-size: 11px;
+    top: 14px;
+    right: 14px;
   }
 }
 
-/* Saved indicator */
+/* ─── Character count — lower-right of writing surface ─── */
+
+.char-count {
+  position: fixed;
+  bottom: 20px;
+  right: 24px;
+  font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-micro);
+  color: var(--grey-600);
+  pointer-events: none;
+  z-index: 10;
+  user-select: none;
+}
+
+@media (max-width: 640px) {
+  .char-count {
+    bottom: 14px;
+    right: 14px;
+    font-size: 9px;
+  }
+}
+
+/* ─── Saved indicator ─── */
+
 @keyframes fade-saved {
   0%   { opacity: 0; }
   15%  { opacity: 1; }
@@ -221,7 +538,7 @@ body {
 
 .saved-indicator {
   position: fixed;
-  bottom: 20px;
+  bottom: 36px;
   right: 24px;
   font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
   font-size: 12px;
@@ -229,8 +546,16 @@ body {
   letter-spacing: 0.04em;
   pointer-events: none;
   opacity: 0;
+  z-index: 10;
 }
 
 .saved-indicator.show {
   animation: fade-saved 2s ease forwards;
+}
+
+@media (max-width: 640px) {
+  .saved-indicator {
+    bottom: 30px;
+    right: 14px;
+  }
 }
