@@ -161,9 +161,24 @@ export function saveNote(id: string, content: object) {
 
 /**
  * Delete a note and remove it from the index.
+ * Also frees image blobs from IndexedDB (client-side only).
  * Returns the new active id (next note or null if empty).
  */
 export function deleteNote(id: string, currentActiveId: string): string | null {
+  // Free image blobs BEFORE removing the record so we can still read the content
+  if (typeof window !== "undefined") {
+    const record = readNote(id);
+    if (record?.content) {
+      // Dynamic import to avoid SSR issues; fire-and-forget
+      import("./imageStore").then(({ extractImgIds, deleteImageBlobs }) => {
+        const imgIds = extractImgIds(record.content);
+        if (imgIds.length > 0) {
+          deleteImageBlobs(imgIds).catch(() => {/* best-effort */});
+        }
+      }).catch(() => {/* best-effort */});
+    }
+  }
+
   deleteNoteRecord(id);
   const ids = readIndex().filter((i) => i !== id);
   writeIndex(ids);

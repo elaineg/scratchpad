@@ -6,6 +6,8 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Paragraph from "@tiptap/extension-paragraph";
 import { saveNote } from "../lib/useNotes";
+import { PasteImage } from "../lib/imageExtension";
+import { storeImageBlob, maybeDownscale } from "../lib/imageStore";
 import type { TipTapNode } from "../lib/docSerializer";
 
 // Extend the default Paragraph to allow a "class" HTML attribute so we can
@@ -74,8 +76,10 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
       immediatelyRender: false,
       extensions: [
         // Exclude the built-in paragraph so we can use our class-aware version
+        // Also exclude StarterKit's built-in image (none by default) to use our custom one
         StarterKit.configure({ paragraph: false }),
         ParagraphWithClass,
+        PasteImage,
         Placeholder.configure({
           placeholder: "Start typing…",
         }),
@@ -89,6 +93,66 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
           "aria-label": "Scratchpad editor",
           "aria-multiline": "true",
           role: "textbox",
+        },
+        // Intercept clipboard paste to handle image/* items
+        handlePaste(view, event) {
+          const items = Array.from(event.clipboardData?.items ?? []);
+          const imageItem = items.find((item) => item.type.startsWith("image/"));
+          if (!imageItem) return false; // let TipTap handle text paste normally
+
+          event.preventDefault();
+          const file = imageItem.getAsFile();
+          if (!file) return true;
+
+          // Off the keystroke path: downscale + store in IndexedDB, then insert node
+          (async () => {
+            try {
+              const downscaled = await maybeDownscale(file);
+              const id = crypto.randomUUID();
+              await storeImageBlob(downscaled, id);
+              // Insert image node with imgId only — no base64, no object URL in the doc
+              view.dispatch(
+                view.state.tr.replaceSelectionWith(
+                  view.state.schema.nodes.image.create({ imgId: id }),
+                ),
+              );
+            } catch {
+              // Silently ignore if paste processing fails
+            }
+          })();
+
+          return true; // event handled
+        },
+        // Nice-to-have: drag-and-drop of image files
+        handleDrop(view, event) {
+          const files = Array.from(event.dataTransfer?.files ?? []);
+          const imageFile = files.find((f) => f.type.startsWith("image/"));
+          if (!imageFile) return false;
+
+          event.preventDefault();
+          const pos = view.posAtCoords({
+            left: event.clientX,
+            top: event.clientY,
+          });
+
+          (async () => {
+            try {
+              const downscaled = await maybeDownscale(imageFile);
+              const id = crypto.randomUUID();
+              await storeImageBlob(downscaled, id);
+              const insertPos = pos ? pos.pos : view.state.doc.content.size;
+              view.dispatch(
+                view.state.tr.insert(
+                  insertPos,
+                  view.state.schema.nodes.image.create({ imgId: id }),
+                ),
+              );
+            } catch {
+              // Silently ignore if drop processing fails
+            }
+          })();
+
+          return true;
         },
       },
       onUpdate({ editor }) {
@@ -192,6 +256,18 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
     editor.commands.focus("end");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId, mounted, editor]);
+
+  // Expose editor on window for e2e testing (injectTestImage helper)
+  useEffect(() => {
+    if (editor && typeof window !== "undefined") {
+      (window as unknown as Record<string, unknown>).__scratchpadEditor = editor;
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        delete (window as unknown as Record<string, unknown>).__scratchpadEditor;
+      }
+    };
+  }, [editor]);
 
   // Flush-on-unload: synchronously write the current editor content on tab-close/hide.
   // This prevents data loss when the user reloads within the debounce window (~800ms).

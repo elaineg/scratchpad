@@ -430,6 +430,38 @@ body {
   font-style: italic;
 }
 
+/* ─── Pasted images — full-width block, square corners, no chrome ─── */
+
+/* The NodeView wrapper that TipTap generates for block nodes */
+.scratchpad-editor [data-node-view-wrapper] {
+  display: block;
+  width: 100%;
+  margin: 1.25em 0;
+}
+
+.scratchpad-editor img.scratchpad-img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  margin: 0;
+  /* Prevent the image from causing horizontal overflow at 375px */
+  object-fit: cover;
+  object-position: center;
+}
+
+/* Calm loading placeholder — monochrome, no spinner */
+.scratchpad-editor .scratchpad-img-placeholder {
+  display: block;
+  width: 100%;
+  height: 2em;
+  background: var(--grey-200);
+  margin: 1.25em 0;
+}
+
 /* ─── Character count — lower-right of writing surface ─── */
 
 .char-count {
