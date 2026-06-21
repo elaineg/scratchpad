@@ -335,3 +335,106 @@ test('SC10-restyle returning-user: pre-seeded note with dateline → sidebar sho
   expect(titleText.trim()).not.toMatch(/Friday/);
   expect(titleText.trim()).not.toMatch(/June 20/);
 });
+
+// ─── SC23: LAPTOP LEFT GUTTER — desktop layout shift tests ──────────────────
+// The .writing-column gets margin-left:0 at min-width:641px, left-aligning it
+// within the writing surface rather than auto-centering.
+//
+// Layout at desktop widths (sidebar=240px, surface-padding=1.5rem≈20px):
+//   surface.x ≈ 240, col.x ≈ 260 (surface.x + padding), col.width ≈ 491px (68ch resolved).
+//   Centered within surface would put col.x ≈ surface.x + (surface.width - col.width) / 2.
+//   At 1440px: centered = 240 + (1200-491)/2 = 594. Actual left-aligned = 260 → gap ≈ 334px.
+//   At 900px: centered = 240 + (660-491)/2 = 324. Actual left-aligned = 260 → gap ≈ 64px.
+
+test('SC23-desktop: writing-column is left-aligned (not centered) at 1440px viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const { col, surface } = await page.evaluate(() => {
+    const colEl = document.querySelector('.writing-column') as HTMLElement;
+    const surfaceEl = document.querySelector('.writing-surface') as HTMLElement;
+    const colBox = colEl.getBoundingClientRect();
+    const surfaceBox = surfaceEl.getBoundingClientRect();
+    return {
+      col: { x: colBox.x, width: colBox.width },
+      surface: { x: surfaceBox.x, width: surfaceBox.width },
+    };
+  });
+
+  // Centered within the writing-surface would place the column at:
+  const centeredX = surface.x + (surface.width - col.width) / 2;
+  // Left-aligned (margin-left:0) places it at surface.x + small padding.
+  // Assert the actual left edge is substantially less than the centered position —
+  // meaning the column is NOT auto-centered within the writing surface.
+  // At 1440px, centeredX ≈ 594, actual col.x ≈ 260 → difference ≈ 334px.
+  // Require: col.x < centeredX - 50px (robust margin, not pixel-exact).
+  expect(col.x).toBeLessThan(centeredX - 50);
+});
+
+test('SC23-desktop: writing-column max-width preserved (not full-bleed) at 1440px', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const colBox = await page.locator('.writing-column').boundingBox();
+  expect(colBox).not.toBeNull();
+
+  // 68ch resolves to ~491px at this app's font size (1.46rem * 13px root, ch ≈ 0.52 * font-size).
+  // It should be well below full-bleed 1440px and still within a comfortable reading range.
+  const colWidth = colBox!.width;
+  expect(colWidth).toBeLessThan(800);
+  expect(colWidth).toBeGreaterThan(300);
+
+  // Also verify via computed style that max-width is NOT unset/none (it is constrained).
+  // getComputedStyle returns a resolved px value for ch units in browsers.
+  const maxWidthPx = await page.locator('.writing-column').evaluate((el) => {
+    const v = getComputedStyle(el).maxWidth;
+    return v === 'none' ? Infinity : parseFloat(v);
+  });
+  // Should be constrained: not "none" (Infinity) and less than full viewport
+  expect(maxWidthPx).toBeLessThan(1440);
+  expect(maxWidthPx).toBeGreaterThan(300);
+});
+
+test('SC23-desktop: writing-column left-aligned at 900px viewport (641px+ breakpoint)', async ({ page }) => {
+  // Test at a narrower desktop to ensure the breakpoint fires at 641px+
+  await page.setViewportSize({ width: 900, height: 768 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const { col, surface } = await page.evaluate(() => {
+    const colEl = document.querySelector('.writing-column') as HTMLElement;
+    const surfaceEl = document.querySelector('.writing-surface') as HTMLElement;
+    const colBox = colEl.getBoundingClientRect();
+    const surfaceBox = surfaceEl.getBoundingClientRect();
+    return {
+      col: { x: colBox.x, width: colBox.width },
+      surface: { x: surfaceBox.x, width: surfaceBox.width },
+    };
+  });
+
+  // Centered within the writing-surface would place the column at:
+  const centeredX = surface.x + (surface.width - col.width) / 2;
+  // Left-aligned places it at surface.x + small padding.
+  // At 900px, centeredX ≈ 324, actual col.x ≈ 260 → difference ≈ 64px.
+  // Require: col.x < centeredX (column is clearly left of where centering would put it).
+  expect(col.x).toBeLessThan(centeredX);
+});
+
+test('SC23-mobile-regression: at 375px no horizontal overflow and column constrained', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/');
+  await page.waitForSelector('[data-testid="scratchpad-editor"]', { state: 'visible', timeout: 10_000 });
+
+  // No horizontal scroll at 375px — mobile layout unaffected by the desktop-only media query
+  const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(scrollWidth).toBeLessThanOrEqual(375);
+
+  // The writing-column at 375px should NOT be full-bleed (still has max-width applied,
+  // though constrained by the available space rather than by the 68ch cap at this width).
+  const colBox = await page.locator('.writing-column').boundingBox();
+  expect(colBox).not.toBeNull();
+  // Column should fit within the 375px viewport width
+  expect(colBox!.x + colBox!.width).toBeLessThanOrEqual(375 + 5); // 5px tolerance
+});
