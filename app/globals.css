@@ -45,7 +45,10 @@ body {
   position: relative;
 }
 
-/* ─── Left sidebar — BARE TEXT ONLY (item 1: no border, no bg fill, no chrome) ─ */
+/* ─── Left sidebar — BARE TEXT ONLY (item 1: no border, no bg fill, no chrome) ─
+   Absolutely positioned so it floats in the left gutter and does NOT push the
+   writing-surface (main) to the right — the column can then margin:0 auto to
+   center on the full viewport width, not just the remaining right slice. */
 
 .notes-sidebar {
   width: var(--sidebar-width);
@@ -54,11 +57,21 @@ body {
   background: transparent;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  position: relative;
+  /* Out of flow so writing-surface spans full viewport width */
+  position: absolute;
+  top: 0;
+  left: 0;
   z-index: 20;
   font-family: "Helvetica Neue", Helvetica, Arial, "Archivo", system-ui, sans-serif;
   font-weight: 300;
+}
+
+/* Narrow desktop (1024-1280px): sidebar is 240px but centered column leaves only
+   ~194px each side at 1024px — reduce sidebar width to avoid overlapping the column. */
+@media (min-width: 641px) and (max-width: 1200px) {
+  .notes-sidebar {
+    width: 180px;
+  }
 }
 
 /* Mobile: off-canvas drawer */
@@ -278,20 +291,17 @@ body {
 }
 
 .writing-column {
-  max-width: 68ch;
+  max-width: 88ch;
   margin: 0 auto;
   position: relative;
 }
 
-/* Desktop/laptop only: shift writing column left so perceived left gutter is
-   roughly halved. At ~1440px, auto-centering creates ~160px left margin inside
-   the writing surface, making the left gutter from screen edge ~400px. Setting
-   margin-left:0 removes that inner left margin, cutting the total to ~240px
-   (the sidebar width alone). max-width:68ch and mobile layout are untouched. */
+/* Desktop/laptop: wider horizontal padding so the centered column has
+   balanced gutters and isn't flush with the writing-surface edges. */
 @media (min-width: 641px) {
-  .writing-column {
-    margin-left: 0;
-    margin-right: auto;
+  .writing-surface {
+    padding-left: 3rem;
+    padding-right: 3rem;
   }
 }
 

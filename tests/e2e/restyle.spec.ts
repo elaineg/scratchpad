@@ -336,17 +336,100 @@ test('SC10-restyle returning-user: pre-seeded note with dateline → sidebar sho
   expect(titleText.trim()).not.toMatch(/June 20/);
 });
 
-// ─── SC23: LAPTOP LEFT GUTTER — desktop layout shift tests ──────────────────
-// The .writing-column gets margin-left:0 at min-width:641px, left-aligning it
-// within the writing surface rather than auto-centering.
-//
-// Layout at desktop widths (sidebar=240px, surface-padding=1.5rem≈20px):
-//   surface.x ≈ 240, col.x ≈ 260 (surface.x + padding), col.width ≈ 491px (68ch resolved).
-//   Centered within surface would put col.x ≈ surface.x + (surface.width - col.width) / 2.
-//   At 1440px: centered = 240 + (1200-491)/2 = 594. Actual left-aligned = 260 → gap ≈ 334px.
-//   At 900px: centered = 240 + (660-491)/2 = 324. Actual left-aligned = 260 → gap ≈ 64px.
+// ─── SC23: CENTERED COLUMN — desktop layout centering tests ─────────────────
+// The .writing-column centers on the PAGE (viewport), not within the flex-right slice.
+// The sidebar is position:absolute (out of flow) so main spans full viewport width.
+// margin:0 auto on .writing-column centers it relative to the viewport.
+// Acceptance: |leftGutter - rightGutter| ≤ 40px at 1280, 1440, 1920px.
+//   leftGutter  = col.x  (distance from viewport left edge to column left)
+//   rightGutter = viewportWidth - (col.x + col.width)
 
-test('SC23-desktop: writing-column is left-aligned (not centered) at 1440px viewport', async ({ page }) => {
+test('SC23-desktop: writing-column is centered on the PAGE at 1280px (page-relative gutters)', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const { leftGutter, rightGutter } = await page.evaluate(() => {
+    const colEl = document.querySelector('.writing-column') as HTMLElement;
+    const colBox = colEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    return {
+      leftGutter: colBox.x,
+      rightGutter: vw - (colBox.x + colBox.width),
+    };
+  });
+
+  // Both gutters must be positive
+  expect(leftGutter).toBeGreaterThan(0);
+  expect(rightGutter).toBeGreaterThan(0);
+  // Page-relative balance: |left - right| ≤ 40px
+  const imbalance = Math.abs(leftGutter - rightGutter);
+  expect(imbalance).toBeLessThanOrEqual(40);
+});
+
+test('SC23-desktop: writing-column is centered on the PAGE at 1440px (page-relative gutters)', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const { leftGutter, rightGutter } = await page.evaluate(() => {
+    const colEl = document.querySelector('.writing-column') as HTMLElement;
+    const colBox = colEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    return {
+      leftGutter: colBox.x,
+      rightGutter: vw - (colBox.x + colBox.width),
+    };
+  });
+
+  expect(leftGutter).toBeGreaterThan(0);
+  expect(rightGutter).toBeGreaterThan(0);
+  const imbalance = Math.abs(leftGutter - rightGutter);
+  expect(imbalance).toBeLessThanOrEqual(40);
+});
+
+test('SC23-desktop: writing-column is centered on the PAGE at 1920px (page-relative gutters)', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const { leftGutter, rightGutter } = await page.evaluate(() => {
+    const colEl = document.querySelector('.writing-column') as HTMLElement;
+    const colBox = colEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    return {
+      leftGutter: colBox.x,
+      rightGutter: vw - (colBox.x + colBox.width),
+    };
+  });
+
+  expect(leftGutter).toBeGreaterThan(0);
+  expect(rightGutter).toBeGreaterThan(0);
+  const imbalance = Math.abs(leftGutter - rightGutter);
+  expect(imbalance).toBeLessThanOrEqual(40);
+});
+
+test('SC23-desktop: sidebar does NOT overlap writing-column at 1024px', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const { sidebarRight, colLeft } = await page.evaluate(() => {
+    const sidebarEl = document.querySelector('[data-testid="notes-sidebar"]') as HTMLElement;
+    const colEl = document.querySelector('.writing-column') as HTMLElement;
+    const sidebarBox = sidebarEl.getBoundingClientRect();
+    const colBox = colEl.getBoundingClientRect();
+    return {
+      sidebarRight: sidebarBox.x + sidebarBox.width,
+      colLeft: colBox.x,
+    };
+  });
+
+  // Sidebar right edge must not exceed the column left edge (no overlap)
+  expect(sidebarRight).toBeLessThanOrEqual(colLeft + 5); // 5px tolerance
+});
+
+test('SC23-desktop: writing-column is centered (not left-shifted) at 1440px viewport', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
@@ -362,14 +445,11 @@ test('SC23-desktop: writing-column is left-aligned (not centered) at 1440px view
     };
   });
 
-  // Centered within the writing-surface would place the column at:
+  // With sidebar out of flow, surface.x ≈ 0 and surface.width ≈ viewport.
+  // Column centered within surface = column centered on page.
   const centeredX = surface.x + (surface.width - col.width) / 2;
-  // Left-aligned (margin-left:0) places it at surface.x + small padding.
-  // Assert the actual left edge is substantially less than the centered position —
-  // meaning the column is NOT auto-centered within the writing surface.
-  // At 1440px, centeredX ≈ 594, actual col.x ≈ 260 → difference ≈ 334px.
-  // Require: col.x < centeredX - 50px (robust margin, not pixel-exact).
-  expect(col.x).toBeLessThan(centeredX - 50);
+  expect(col.x).toBeGreaterThan(centeredX - 40);
+  expect(col.x).toBeLessThan(centeredX + 40);
 });
 
 test('SC23-desktop: writing-column max-width preserved (not full-bleed) at 1440px', async ({ page }) => {
@@ -380,10 +460,9 @@ test('SC23-desktop: writing-column max-width preserved (not full-bleed) at 1440p
   const colBox = await page.locator('.writing-column').boundingBox();
   expect(colBox).not.toBeNull();
 
-  // 68ch resolves to ~491px at this app's font size (1.46rem * 13px root, ch ≈ 0.52 * font-size).
-  // It should be well below full-bleed 1440px and still within a comfortable reading range.
+  // 88ch at 13px root ≈ ~635px. Should be well below full-bleed 1440px.
   const colWidth = colBox!.width;
-  expect(colWidth).toBeLessThan(800);
+  expect(colWidth).toBeLessThan(900);
   expect(colWidth).toBeGreaterThan(300);
 
   // Also verify via computed style that max-width is NOT unset/none (it is constrained).
@@ -397,8 +476,8 @@ test('SC23-desktop: writing-column max-width preserved (not full-bleed) at 1440p
   expect(maxWidthPx).toBeGreaterThan(300);
 });
 
-test('SC23-desktop: writing-column left-aligned at 900px viewport (641px+ breakpoint)', async ({ page }) => {
-  // Test at a narrower desktop to ensure the breakpoint fires at 641px+
+test('SC23-desktop: writing-column is centered at 900px viewport (641px+ breakpoint)', async ({ page }) => {
+  // Test at a narrower desktop to ensure centering applies at 641px+
   await page.setViewportSize({ width: 900, height: 768 });
   await page.goto('/');
   await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
@@ -414,12 +493,15 @@ test('SC23-desktop: writing-column left-aligned at 900px viewport (641px+ breakp
     };
   });
 
-  // Centered within the writing-surface would place the column at:
+  // With sidebar out of flow, surface spans full viewport (surface.x ≈ 0).
+  // At 900px with 88ch col the column may fill most/all of the available width.
+  // Column left edge should be >= 0 (not clipped off the left)
+  expect(col.x).toBeGreaterThanOrEqual(0);
+  // And the column should not bleed past the right edge of the surface.
+  expect(col.x + col.width).toBeLessThanOrEqual(surface.x + surface.width + 5);
+  // Centering: col.x ≈ centeredX (within 40px tolerance)
   const centeredX = surface.x + (surface.width - col.width) / 2;
-  // Left-aligned places it at surface.x + small padding.
-  // At 900px, centeredX ≈ 324, actual col.x ≈ 260 → difference ≈ 64px.
-  // Require: col.x < centeredX (column is clearly left of where centering would put it).
-  expect(col.x).toBeLessThan(centeredX);
+  expect(col.x).toBeGreaterThan(centeredX - 40);
 });
 
 test('SC23-mobile-regression: at 375px no horizontal overflow and column constrained', async ({ page }) => {
@@ -432,7 +514,7 @@ test('SC23-mobile-regression: at 375px no horizontal overflow and column constra
   expect(scrollWidth).toBeLessThanOrEqual(375);
 
   // The writing-column at 375px should NOT be full-bleed (still has max-width applied,
-  // though constrained by the available space rather than by the 68ch cap at this width).
+  // though constrained by the available space rather than by the 88ch cap at this width).
   const colBox = await page.locator('.writing-column').boundingBox();
   expect(colBox).not.toBeNull();
   // Column should fit within the 375px viewport width
@@ -507,6 +589,118 @@ test('SC24-spacing: dateline line-height unchanged (still ~1.4) after spacing pa
   // dateline-para: line-height: 1.4 → ratio ≈ 1.4 (±0.15)
   expect(ratio).toBeGreaterThan(1.2);
   expect(ratio).toBeLessThan(1.6);
+});
+
+// ─── SC23: Additional centering/alignment tests at 1280px ────────────────────
+
+test('SC23-desktop: writing-column is centered at 1280px with balanced gutters (surface-relative)', async ({ page }) => {
+  // With sidebar out of flow, surface.x ≈ 0 and surface.width ≈ viewport width.
+  // Surface-relative gutters equal page-relative gutters.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const { leftGutter, rightGutter, colWidth, surfaceWidth } = await page.evaluate(() => {
+    const colEl = document.querySelector('.writing-column') as HTMLElement;
+    const surfaceEl = document.querySelector('.writing-surface') as HTMLElement;
+    const colBox = colEl.getBoundingClientRect();
+    const surfaceBox = surfaceEl.getBoundingClientRect();
+    const leftGutter = colBox.x - surfaceBox.x;
+    const rightGutter = (surfaceBox.x + surfaceBox.width) - (colBox.x + colBox.width);
+    return {
+      leftGutter,
+      rightGutter,
+      colWidth: colBox.width,
+      surfaceWidth: surfaceBox.width,
+    };
+  });
+
+  // Left and right gutters must be balanced: |left - right| <= 40px.
+  // Before fix: leftGutter ≈ 48px, rightGutter ≈ 400px+ (sidebar pushed surface right).
+  // After fix: surface.x ≈ 0, gutters balanced.
+  const gutterImbalance = Math.abs(leftGutter - rightGutter);
+  expect(gutterImbalance).toBeLessThanOrEqual(40);
+
+  // Column must be narrower than the surface (not full-bleed).
+  expect(colWidth).toBeLessThan(surfaceWidth);
+  // Column has some minimum width (88ch at 13px ≈ ~570–640px).
+  expect(colWidth).toBeGreaterThan(300);
+});
+
+test('SC23-desktop: text inside writing-column is left-aligned at 1280px', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('[data-testid="scratchpad-editor"]', { state: 'visible', timeout: 10_000 });
+
+  await page.locator('[data-testid="scratchpad-editor"]').click();
+  await page.keyboard.type('alignment check text');
+
+  // The editor paragraph text must be left-aligned, not center-aligned.
+  const textAlign = await page.locator('.scratchpad-editor p').first().evaluate((el) => {
+    return window.getComputedStyle(el).textAlign;
+  });
+
+  // Acceptable left-align values from browsers: 'left', 'start'
+  expect(['left', 'start']).toContain(textAlign);
+});
+
+test('SC23-desktop: text inside writing-column is left-aligned at 1440px', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('[data-testid="scratchpad-editor"]', { state: 'visible', timeout: 10_000 });
+
+  await page.locator('[data-testid="scratchpad-editor"]').click();
+  await page.keyboard.type('alignment check text wider');
+
+  // The editor paragraph text must be left-aligned, not center-aligned.
+  const textAlign = await page.locator('.scratchpad-editor p').first().evaluate((el) => {
+    return window.getComputedStyle(el).textAlign;
+  });
+
+  expect(['left', 'start']).toContain(textAlign);
+});
+
+test('SC23-desktop: writing-column is centered at 1440px with balanced gutters (relationship assert)', async ({ page }) => {
+  // Explicit relationship check: left gutter ≈ right gutter (within 40px tolerance).
+  // With sidebar out of flow, surface spans full viewport — surface-relative = page-relative.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const { leftGutter, rightGutter } = await page.evaluate(() => {
+    const colEl = document.querySelector('.writing-column') as HTMLElement;
+    const surfaceEl = document.querySelector('.writing-surface') as HTMLElement;
+    const colBox = colEl.getBoundingClientRect();
+    const surfaceBox = surfaceEl.getBoundingClientRect();
+    return {
+      leftGutter: colBox.x - surfaceBox.x,
+      rightGutter: (surfaceBox.x + surfaceBox.width) - (colBox.x + colBox.width),
+    };
+  });
+
+  // Both gutters must be positive (column doesn't overflow surface).
+  expect(leftGutter).toBeGreaterThan(0);
+  expect(rightGutter).toBeGreaterThan(0);
+  // Symmetric: the imbalance must be ≤ 40px.
+  const gutterImbalance = Math.abs(leftGutter - rightGutter);
+  expect(gutterImbalance).toBeLessThanOrEqual(40);
+});
+
+test('SC23-desktop: max-width ≥ ~500px (wider than old 68ch ≈ 408px) at 1280px', async ({ page }) => {
+  // The column was widened from 68ch to 88ch. At 13px root, 88ch ≈ 570–640px.
+  // The old 68ch ≈ 408–440px. Assert the column is substantially wider than ~440px.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await page.waitForSelector('.writing-column', { state: 'visible', timeout: 10_000 });
+
+  const colWidth = await page.locator('.writing-column').evaluate((el) => {
+    return el.getBoundingClientRect().width;
+  });
+
+  // Should be >= 500px (well above the old 68ch ≈ 408px threshold).
+  expect(colWidth).toBeGreaterThan(500);
+  // And still below full viewport width (it's constrained).
+  expect(colWidth).toBeLessThan(1100);
 });
 
 test('SC24-spacing: editor body has no letter-spacing override (no regression)', async ({ page }) => {
