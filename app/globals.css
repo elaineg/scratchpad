@@ -279,7 +279,9 @@ body {
   flex: 1;
   min-width: 0;
   min-height: 100vh;
-  padding: 12vh 1.5rem 6rem;
+  /* SC25: bottom padding ~50vh so the last/current line can scroll up to viewport center.
+     Classic typewriter mode: the document must be scrollable past the last line. */
+  padding: 12vh 1.5rem 50vh;
   position: relative;
   background: var(--paper);
 }
@@ -361,10 +363,12 @@ body {
   margin: 1em 0 0.35em;
 }
 
-/* Paragraphs */
+/* Paragraphs — SC26: paragraph/body weight bumped to 400 (one notch above the
+   ~300 inherited from .scratchpad-editor); headings/dateline/sidebar unaffected. */
 .scratchpad-editor p {
   margin: 0 0 1em;
   position: relative;
+  font-weight: 400;
 }
 
 .scratchpad-editor p:last-child {

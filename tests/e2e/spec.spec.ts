@@ -44,6 +44,12 @@ test('SC1: editor is auto-focused; typing "h" without any click inserts it', asy
 test('SC2: "## Roadmap" becomes H2 with no visible "## " syntax', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime with one character to trigger the dateline setTimeout(0), then wait for it to settle.
+  // After settling, delete the priming character (Backspace), leaving the caret on the second line
+  // (the content line, directly after the dateline). Then type the markdown content.
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('## Roadmap');
   // TipTap fires the heading input rule on the trailing space; result is an H2
   await expect(page.locator(`${EDITOR} h2`)).toBeVisible({ timeout: 3000 });
@@ -57,6 +63,11 @@ test('SC2: "## Roadmap" becomes H2 with no visible "## " syntax', async ({ page 
 test('H1 rule: "# " prefix converts to H1', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('# Hello World');
   await expect(page.locator(`${EDITOR} h1`)).toBeVisible({ timeout: 3000 });
   await expect(page.locator(`${EDITOR} h1`)).toHaveText('Hello World');
@@ -68,6 +79,11 @@ test('H1 rule: "# " prefix converts to H1', async ({ page }) => {
 test('H3 rule: "### " prefix converts to H3', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('### Sub');
   await expect(page.locator(`${EDITOR} h3`)).toBeVisible({ timeout: 3000 });
   await expect(page.locator(`${EDITOR} h3`)).toHaveText('Sub');
@@ -79,6 +95,11 @@ test('H3 rule: "### " prefix converts to H3', async ({ page }) => {
 test('Enter after heading returns next line to paragraph (not another heading)', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('## My heading');
   await page.keyboard.press('Enter');
   await page.keyboard.type('normal text');
@@ -91,6 +112,11 @@ test('Enter after heading returns next line to paragraph (not another heading)',
 test('SC3: "- buy milk" becomes a bulleted list item; no literal "- "', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('- buy milk');
   await expect(page.locator(`${EDITOR} ul li`)).toBeVisible({ timeout: 3000 });
   await expect(page.locator(`${EDITOR} ul li`)).toContainText('buy milk');
@@ -103,6 +129,11 @@ test('SC3: "- buy milk" becomes a bulleted list item; no literal "- "', async ({
 test('Numbered list rule: "1. " prefix converts to ordered list', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('1. first item');
   await expect(page.locator(`${EDITOR} ol li`)).toBeVisible({ timeout: 3000 });
   await expect(page.locator(`${EDITOR} ol li`)).toContainText('first item');
@@ -112,6 +143,11 @@ test('Numbered list rule: "1. " prefix converts to ordered list', async ({ page 
 test('Blockquote rule: "> " prefix converts to blockquote', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('> wise words');
   await expect(page.locator(`${EDITOR} blockquote`)).toBeVisible({ timeout: 3000 });
   await expect(page.locator(`${EDITOR} blockquote`)).toContainText('wise words');
@@ -121,6 +157,11 @@ test('Blockquote rule: "> " prefix converts to blockquote', async ({ page }) => 
 test('SC4: "**ship it**" renders bold; no literal asterisks', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('**ship it**');
   await expect(page.locator(`${EDITOR} strong`)).toBeVisible({ timeout: 3000 });
   await expect(page.locator(`${EDITOR} strong`)).toHaveText('ship it');
@@ -132,6 +173,11 @@ test('SC4: "**ship it**" renders bold; no literal asterisks', async ({ page }) =
 test('Italic rule: "*italic*" renders em; no literal asterisks', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('*italic*');
   await expect(page.locator(`${EDITOR} em`)).toBeVisible({ timeout: 3000 });
   await expect(page.locator(`${EDITOR} em`)).toHaveText('italic');
@@ -143,6 +189,11 @@ test('Italic rule: "*italic*" renders em; no literal asterisks', async ({ page }
 test('Inline code rule: backtick-wrapped text renders as <code>; no backticks visible', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('`hello`');
   await expect(page.locator(`${EDITOR} code`)).toBeVisible({ timeout: 3000 });
   await expect(page.locator(`${EDITOR} code`)).toHaveText('hello');
@@ -154,6 +205,11 @@ test('Inline code rule: backtick-wrapped text renders as <code>; no backticks vi
 test('SC5: typing "---" + Enter on a new line produces an <hr>', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   // TipTap StarterKit fires the HR rule when you type "---" then press Enter
   await page.keyboard.type('---');
   await page.keyboard.press('Enter');
@@ -180,6 +236,11 @@ test('SC6: autosave round-trip — typed text persists after reload', async ({ p
 test('Autosave: multi-line document with heading persists after reload', async ({ page }) => {
   await freshLoad(page);
   await page.locator(EDITOR).click();
+  // Prime one character and wait for the dateline setTimeout(0) to settle,
+  // then delete it (leaving caret on the content line after the dateline).
+  await page.keyboard.type('x');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('## My Title');
   await page.keyboard.press('Enter');
   await page.keyboard.type('paragraph content here');

@@ -10,6 +10,67 @@ import { PasteImage } from "../lib/imageExtension";
 import { storeImageBlob, maybeDownscale } from "../lib/imageStore";
 import type { TipTapNode } from "../lib/docSerializer";
 
+// ─── SC25: Typewriter scroll ───────────────────────────────────────────────────
+// Called on every editor update/selection-change; coalesces to ONE rAF per tick.
+// Reads the live editor from a ref (no stale closure); scrolls window to center
+// the caret once it passes the viewport midpoint. Respects prefers-reduced-motion.
+function makeTypewriterScroller(
+  getEditor: () => (ReturnType<typeof useEditor> | null)
+): () => void {
+  let rafPending = false;
+
+  return function scheduleScroll() {
+    if (rafPending) return;
+    rafPending = true;
+
+    requestAnimationFrame(() => {
+      rafPending = false;
+
+      const editor = getEditor();
+      if (!editor || editor.isDestroyed) return;
+
+      // Get caret screen position from ProseMirror view
+      let caretTop = 0;
+      let caretHeight = 0;
+      try {
+        const view = editor.view;
+        const head = view.state.selection.head;
+        const coords = view.coordsAtPos(head);
+        caretTop = coords.top;
+        caretHeight = coords.bottom - coords.top;
+      } catch {
+        // Fallback: native selection API
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const rect = sel.getRangeAt(0).getBoundingClientRect();
+          caretTop = rect.top;
+          caretHeight = rect.height;
+        } else {
+          return;
+        }
+      }
+
+      const caretMidY = caretTop + caretHeight / 2;
+      const viewportMid = window.innerHeight / 2;
+      const distFromMid = caretMidY - viewportMid;
+
+      // Dead zone: ±15% of viewport height — no micro-scroll when caret is near center
+      const deadZone = window.innerHeight * 0.15;
+      if (Math.abs(distFromMid) < deadZone) return;
+
+      // Target: scroll so caret lands at viewport center
+      const targetScrollY = window.scrollY + distFromMid;
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      const clampedY = Math.max(0, Math.min(targetScrollY, maxScroll));
+
+      // Read reduced-motion live (not stale closure)
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      window.scrollTo({ top: clampedY, behavior: reducedMotion ? "auto" : "smooth" });
+    });
+  };
+}
+
 // Extend the default Paragraph to allow a "class" HTML attribute so we can
 // mark the auto-dateline paragraph for faint styling (item 7).
 const ParagraphWithClass = Paragraph.extend({
@@ -63,6 +124,14 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
 
   // Track the current noteId so we can save to the right note
   const noteIdRef = useRef(noteId);
+
+  // SC25: Typewriter scroll — create a stable scroller once; reads editor via getter fn
+  const editorInstanceRef = useRef<ReturnType<typeof useEditor>>(null);
+  // scheduleScrollRef holds a stable function that never changes — safe to call from
+  // the static useEditor callbacks (which close over it once at init time).
+  const scheduleScrollRef = useRef<() => void>(
+    makeTypewriterScroller(() => editorInstanceRef.current)
+  );
 
   const triggerSaved = useCallback(() => {
     setSavedKey((k) => k + 1);
@@ -155,7 +224,14 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
           return true;
         },
       },
+      // SC25: fires when selection/caret moves (keyboard nav, click, arrow keys)
+      onSelectionUpdate() {
+        scheduleScrollRef.current();
+      },
       onUpdate({ editor }) {
+        // SC25: schedule typewriter scroll after content change (typing, Enter, delete)
+        scheduleScrollRef.current();
+
         // Skip processing during dateline insertion (prevents re-entry)
         if (isInsertingDatelineRef.current) return;
 
@@ -220,6 +296,11 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
     },
     []
   );
+
+  // SC25: keep editorInstanceRef current so the typewriter scroll hook can read it
+  useEffect(() => {
+    editorInstanceRef.current = editor;
+  }, [editor]);
 
   // Mark mounted (client-only)
   useEffect(() => {
