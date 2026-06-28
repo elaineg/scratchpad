@@ -280,3 +280,266 @@ test('SC25: typewriter scroll does not block typing (snappy — no perceptible l
   const editorText = await page.locator('.scratchpad-editor').innerText();
   expect(editorText).toContain('abcdefghijklmnopqrstuvwxyz');
 });
+
+// ─── SC25 NO-JUMP-ON-SWITCH (Elaine 2026-06-27 amendment) ───────────────────
+//
+// When the user opens/switches to another note via the sidebar the editor must
+// load at scrollY === 0 instantly and statically — no animated jump, no smooth-
+// scroll, no auto-centering of the caret on note activation.  The typewriter
+// recentering must engage ONLY once the user TYPES past the viewport midpoint on
+// the newly-opened note.
+//
+// SIDEBAR POSITIONING NOTE: The notes-sidebar is position:absolute at desktop
+// widths, so its rows sit at document top and scroll off-screen when typewriter
+// scroll is engaged. Real users scroll up to see the sidebar before switching.
+// The test mirrors that: after getting scrollY > 0, we use scrollIntoView to
+// bring the sidebar button into view (which also scrolls to ~0), then click it.
+// The app fires window.scrollTo({top:0, behavior:'instant'}) on switch; the
+// assertion confirms the scroll is at 0 and stays at 0 (no smooth animation).
+
+const NEW_NOTE_BTN = '[data-testid="new-note-btn"]';
+
+/**
+ * Scroll to the top of the page (where the sidebar always lives) and click
+ * the new-note button.  The sidebar is position:absolute so its buttons are
+ * always at document y=0; scrolling to top guarantees they are in the viewport.
+ * We use window.scrollTo({top:0}) rather than scrollIntoView — the latter can
+ * place the element 1-3px above the viewport (block:'center' on a near-top
+ * element) causing Playwright's click to miss.
+ */
+async function clickNewNote(page: import('@playwright/test').Page) {
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+  await page.waitForTimeout(100);
+  await page.locator(NEW_NOTE_BTN).click();
+}
+
+/**
+ * Scroll to the top of the page and click the nth note-row button.
+ * Same rationale as clickNewNote — sidebar rows at doc-top, scroll to 0 first.
+ */
+async function clickNoteRow(page: import('@playwright/test').Page, n: number) {
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+  await page.waitForTimeout(100);
+  await page.locator('.note-row').nth(n).locator('button.note-row-btn').click();
+}
+
+test('SC25-no-jump: switching notes via sidebar lands at scrollY 0 (static, no animation)', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // ── Seed two notes in localStorage to avoid autosave timing issues ───────
+  // Pre-seeded notes guarantee the sidebar shows 2 rows on first load,
+  // so we don't need to type + wait for autosave before creating note B.
+  const noteIdA = 'no-jump-test-a';
+  const noteIdB = 'no-jump-test-b';
+  const makeDoc = (text: string) => ({
+    type: 'doc',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+  });
+  await page.goto('/');
+  await page.evaluate(({ idA, idB, docA, docB }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(`scratchpad-note-${idA}`, JSON.stringify({ id: idA, content: docA, updatedAt: 1000 }));
+    window.localStorage.setItem(`scratchpad-note-${idB}`, JSON.stringify({ id: idB, content: docB, updatedAt: 2000 }));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([idB, idA]));
+    window.localStorage.setItem('scratchpad-active-id', idB);
+  }, { idA: noteIdA, idB: noteIdB, docA: makeDoc('Note A content'), docB: makeDoc('Note B content') });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+
+  // Verify 2 note rows are present (note B is active / most-recent = row 0)
+  await expect(page.locator('.note-row')).toHaveCount(2, { timeout: 5000 });
+
+  // ── Type many lines on note B so typewriter scroll engages (scrollY > 0) ─
+  await page.locator(EDITOR).click();
+  for (let i = 0; i < 30; i++) {
+    await page.keyboard.press('Enter');
+  }
+  let scrollB = 0;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await page.waitForTimeout(150);
+    scrollB = await page.evaluate(() => window.scrollY);
+    if (scrollB > 20) break;
+  }
+  expect(scrollB).toBeGreaterThan(20); // confirmed: typewriter engaged on note B
+
+  // ── Switch to note A ─────────────────────────────────────────────────────
+  // Scroll to top first (sidebar is position:absolute, lives at document top).
+  // After the click, the app fires window.scrollTo({top:0, behavior:'instant'}).
+  // We assert scrollY === 0 and that it STAYS at 0 (no deferred smooth-scroll).
+  // NOTE: We assert 0 remains after 600ms — this is the real behavioral gate.
+  // Without the fix, a smooth typewriter scroll animation would move scrollY
+  // away from 0 within 300ms of the note switch.
+  await clickNoteRow(page, 1); // note A is 2nd row (note B is most-recent → row 0)
+
+  const scrollAfterSwitchToA = await page.evaluate(() => window.scrollY);
+  expect(scrollAfterSwitchToA).toBe(0);
+
+  // 600ms: two rAF cycles + a full smooth-scroll window — if a smooth animation
+  // had fired, scrollY would be nonzero here.
+  await page.waitForTimeout(600);
+  const scrollAfterDelay = await page.evaluate(() => window.scrollY);
+  expect(scrollAfterDelay).toBe(0);
+
+  // ── B → A → B a second time, each switch must land at 0 ─────────────────
+  // Type lines on note A to engage typewriter
+  await page.locator(EDITOR).click();
+  for (let i = 0; i < 25; i++) {
+    await page.keyboard.press('Enter');
+  }
+  let scrollA2 = 0;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await page.waitForTimeout(150);
+    scrollA2 = await page.evaluate(() => window.scrollY);
+    if (scrollA2 > 20) break;
+  }
+  expect(scrollA2).toBeGreaterThan(20);
+
+  // Switch to B
+  await clickNoteRow(page, 0); // note B is row 0 (most-recent)
+  const scrollAtBAgain = await page.evaluate(() => window.scrollY);
+  expect(scrollAtBAgain).toBe(0);
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+  // Type on note B to scroll it, then switch back to A
+  await page.locator(EDITOR).click();
+  for (let i = 0; i < 25; i++) {
+    await page.keyboard.press('Enter');
+  }
+  let scrollB2 = 0;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await page.waitForTimeout(150);
+    scrollB2 = await page.evaluate(() => window.scrollY);
+    if (scrollB2 > 20) break;
+  }
+  expect(scrollB2).toBeGreaterThan(20);
+
+  // Switch back to A — must land at 0 and stay there
+  await clickNoteRow(page, 1);
+  const scrollBackAtA = await page.evaluate(() => window.scrollY);
+  expect(scrollBackAtA).toBe(0);
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test('SC25-no-jump: typewriter DOES NOT engage on fresh note until user types past midpoint', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // Seed note A in localStorage so we start with 1 saved note (avoids autosave timing issues)
+  const noteIdA = 'no-jump-typewriter-a';
+  const docA = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Note A' }] }] };
+  await page.goto('/');
+  await page.evaluate(({ id, doc }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(`scratchpad-note-${id}`, JSON.stringify({ id, content: doc, updatedAt: 1000 }));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([id]));
+    window.localStorage.setItem('scratchpad-active-id', id);
+  }, { id: noteIdA, doc: docA });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+
+  // Type many lines on note A so typewriter engages (scrollY > 0)
+  await page.locator(EDITOR).click();
+  for (let i = 0; i < 30; i++) {
+    await page.keyboard.press('Enter');
+  }
+  let scrollA = 0;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await page.waitForTimeout(150);
+    scrollA = await page.evaluate(() => window.scrollY);
+    if (scrollA > 20) break;
+  }
+  expect(scrollA).toBeGreaterThan(20);
+
+  // Create note B (new blank note) — app must reset scrollY to 0 on creation.
+  await clickNewNote(page);
+  await expect(page.locator('.note-row')).toHaveCount(2, { timeout: 5000 });
+  await page.waitForTimeout(300); // let the editor mount and suppressScroll settle
+
+  // After the switch, page must be at top (app resets scroll on note creation)
+  const scrollOnNewNote = await page.evaluate(() => window.scrollY);
+  expect(scrollOnNewNote).toBe(0);
+
+  // Type just a few lines — caret is well within top half of the 900px viewport.
+  // The first Enter triggers dateline insertion on a new note; subsequent keystrokes
+  // clear suppressScrollRef so the typewriter CAN engage later.
+  for (let i = 0; i < 5; i++) {
+    await page.keyboard.press('Enter');
+  }
+  await page.waitForTimeout(500);
+
+  // Typewriter should NOT have engaged yet — page still at top
+  const scrollAfterFewLines = await page.evaluate(() => window.scrollY);
+  expect(scrollAfterFewLines).toBeLessThan(50);
+
+  // Now type many lines to push caret past the viewport midpoint (450px at 900px).
+  // ~25 lines × ~26px/line ≈ 650px — well past midpoint.
+  for (let i = 0; i < 25; i++) {
+    await page.keyboard.press('Enter');
+  }
+
+  let scrollAfterManyLines = 0;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await page.waitForTimeout(200);
+    scrollAfterManyLines = await page.evaluate(() => window.scrollY);
+    if (scrollAfterManyLines > 20) break;
+  }
+  // Typewriter SHOULD engage — page must scroll to keep caret centered
+  expect(scrollAfterManyLines).toBeGreaterThan(20);
+});
+
+test('SC25-no-jump: with prefers-reduced-motion:reduce, note switch still lands at scrollY 0', async ({ browser }) => {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 900 },
+    reducedMotion: 'reduce',
+  });
+  const page = await context.newPage();
+
+  // Seed two notes in localStorage to avoid autosave timing issues
+  const noteIdA = 'no-jump-rm-a';
+  const noteIdB = 'no-jump-rm-b';
+  const makeDoc = (text: string) => ({
+    type: 'doc',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+  });
+  await page.goto('/');
+  await page.evaluate(({ idA, idB, docA, docB }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(`scratchpad-note-${idA}`, JSON.stringify({ id: idA, content: docA, updatedAt: 1000 }));
+    window.localStorage.setItem(`scratchpad-note-${idB}`, JSON.stringify({ id: idB, content: docB, updatedAt: 2000 }));
+    window.localStorage.setItem('scratchpad-notes-index', JSON.stringify([idB, idA]));
+    window.localStorage.setItem('scratchpad-active-id', idB);
+  }, { idA: noteIdA, idB: noteIdB, docA: makeDoc('Note A'), docB: makeDoc('Note B') });
+  await page.reload();
+  await page.waitForSelector(EDITOR, { state: 'visible', timeout: 10_000 });
+
+  // 2 note rows must be present (note B is active = row 0)
+  await expect(page.locator('.note-row')).toHaveCount(2, { timeout: 5000 });
+
+  // Type many lines on note B to engage typewriter scroll
+  await page.locator(EDITOR).click();
+  for (let i = 0; i < 30; i++) {
+    await page.keyboard.press('Enter');
+  }
+  let scrollB = 0;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await page.waitForTimeout(150);
+    scrollB = await page.evaluate(() => window.scrollY);
+    if (scrollB > 20) break;
+  }
+  expect(scrollB).toBeGreaterThan(20);
+
+  // Switch back to note A (row index 1) — scroll to top so button is in viewport
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+  await page.waitForTimeout(100);
+  await page.locator('.note-row').nth(1).locator('button.note-row-btn').click();
+
+  // Must be at 0 immediately — the app fires window.scrollTo({top:0, behavior:'instant'}).
+  // Also assert 600ms later: smooth animation (unfixed behavior) would have moved scrollY.
+  const scrollAfterSwitch = await page.evaluate(() => window.scrollY);
+  expect(scrollAfterSwitch).toBe(0);
+  await page.waitForTimeout(600);
+  const scrollDeferred = await page.evaluate(() => window.scrollY);
+  await context.close();
+  expect(scrollDeferred).toBe(0);
+});

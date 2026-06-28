@@ -14,12 +14,16 @@ import type { TipTapNode } from "../lib/docSerializer";
 // Called on every editor update/selection-change; coalesces to ONE rAF per tick.
 // Reads the live editor from a ref (no stale closure); scrolls window to center
 // the caret once it passes the viewport midpoint. Respects prefers-reduced-motion.
+// getSuppressed: returns true while a note is being loaded/switched (no-jump-on-switch).
 function makeTypewriterScroller(
-  getEditor: () => (ReturnType<typeof useEditor> | null)
+  getEditor: () => (ReturnType<typeof useEditor> | null),
+  getSuppressed: () => boolean
 ): () => void {
   let rafPending = false;
 
   return function scheduleScroll() {
+    // Gate: do not auto-center on note load/switch — only engage on genuine user input
+    if (getSuppressed()) return;
     if (rafPending) return;
     rafPending = true;
 
@@ -127,10 +131,16 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
 
   // SC25: Typewriter scroll — create a stable scroller once; reads editor via getter fn
   const editorInstanceRef = useRef<ReturnType<typeof useEditor>>(null);
+  // suppressScrollRef: true while a note is loading/switching (no-jump-on-switch fix).
+  // Starts true so the initial load is also static. Cleared on first genuine user keystroke.
+  const suppressScrollRef = useRef(true);
   // scheduleScrollRef holds a stable function that never changes — safe to call from
   // the static useEditor callbacks (which close over it once at init time).
   const scheduleScrollRef = useRef<() => void>(
-    makeTypewriterScroller(() => editorInstanceRef.current)
+    makeTypewriterScroller(
+      () => editorInstanceRef.current,
+      () => suppressScrollRef.current
+    )
   );
 
   const triggerSaved = useCallback(() => {
@@ -229,6 +239,12 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
         scheduleScrollRef.current();
       },
       onUpdate({ editor }) {
+        // SC25: lift the suppress gate on genuine user input (not during note restore or
+        // dateline insertion). This is the ONLY place we clear suppressScrollRef — so the
+        // typewriter recenter only engages after the user actually types on the active note.
+        if (!isRestoringRef.current && !isInsertingDatelineRef.current) {
+          suppressScrollRef.current = false;
+        }
         // SC25: schedule typewriter scroll after content change (typing, Enter, delete)
         scheduleScrollRef.current();
 
@@ -310,6 +326,14 @@ export default function Editor({ noteId, initialContent, isNewNote, onContentCha
   // When noteId or initialContent changes (user switched notes): restore new content
   useEffect(() => {
     if (!mounted || !editor) return;
+
+    // ── No-jump-on-switch (SC25 / Elaine 2026-06-27) ──────────────────────────
+    // 1. Re-suppress typewriter scroll so setContent + focus("end") do not trigger
+    //    an animated recenter. The gate lifts again on the first genuine keystroke.
+    suppressScrollRef.current = true;
+    // 2. Instantly reset the scroll position to the top of the page — no animation.
+    window.scrollTo({ top: 0, behavior: "instant" });
+    // ──────────────────────────────────────────────────────────────────────────
 
     // Reset dateline refs for the new note.
     // pendingDatelineRef is armed synchronously here so the VERY FIRST keystroke
